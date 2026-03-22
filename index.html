@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BeatForge — AI Beat Saber Mapper</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 48 48" fill="none">
+            <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="currentColor" opacity="0.3"/>
+            <path d="M24 24V44" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="24" cy="24" r="4" fill="currentColor"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="logo-text">BEATFORGE</h1>
+          <p class="logo-sub">AI Auto-Mapper &bull; v3.3.0 &bull; Beat Saber 1.40+</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-version">Schema 3.3.0</span>
+        <span class="badge badge-ranked">Ranked Mode</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- STEP 1: Upload -->
+      <section class="panel panel-upload" id="panel-upload">
+        <div class="panel-header">
+          <span class="step-num">01</span>
+          <h2>LOAD AUDIO &amp; COVER</h2>
+        </div>
+        <div class="upload-grid">
+          <div class="upload-zone" id="zone-audio">
+            <div class="upload-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M9 18V5l12-2v13"/>
+                <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+              </svg>
+            </div>
+            <p class="upload-label">Drop audio file</p>
+            <p class="upload-hint">.ogg .mp3 .wav .flac .m4a .aac .wma</p>
+            <input type="file" id="input-audio" accept=".ogg,.mp3,.wav,.flac,.m4a,.aac,.wma,audio/*" hidden>
+          </div>
+          <div class="upload-zone" id="zone-cover">
+            <div class="upload-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="M21 15l-5-5L5 21"/>
+              </svg>
+            </div>
+            <p class="upload-label">Drop cover image</p>
+            <p class="upload-hint">.jpg .png .webp .gif .bmp</p>
+            <input type="file" id="input-cover" accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,image/*" hidden>
+          </div>
+        </div>
+        <div class="file-status" id="file-status"></div>
+      </section>
+
+      <!-- STEP 2: Config -->
+      <section class="panel panel-config" id="panel-config">
+        <div class="panel-header">
+          <span class="step-num">02</span>
+          <h2>MAP CONFIGURATION</h2>
+        </div>
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Song Name</label>
+            <input type="text" id="cfg-song-name" placeholder="My Song">
+          </div>
+          <div class="config-field">
+            <label>Song Author</label>
+            <input type="text" id="cfg-song-author" placeholder="Artist Name">
+          </div>
+          <div class="config-field">
+            <label>Map Author</label>
+            <input type="text" id="cfg-map-author" placeholder="BeatForge AI">
+          </div>
+          <div class="config-field">
+            <label>BPM <small>(auto-detected, click to override)</small></label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="number" id="cfg-bpm" placeholder="Auto-detect" min="30" max="300" style="flex:1">
+              <button type="button" id="btn-tap-bpm" class="btn-sm" title="Tap to the beat to set BPM manually">TAP</button>
+            </div>
+            <small id="bpm-info" style="color:#888;font-size:0.65rem;margin-top:2px;display:block"></small>
+          </div>
+          <div class="config-field">
+            <label>Environment</label>
+            <select id="cfg-environment">
+              <optgroup label="Base Environments">
+                <option value="DefaultEnvironment">Default</option>
+                <option value="NiceEnvironment">Nice</option>
+                <option value="TriangleEnvironment">Triangle</option>
+                <option value="BigMirrorEnvironment">Big Mirror</option>
+                <option value="KDAEnvironment">K/DA</option>
+                <option value="MonstercatEnvironment">Monstercat</option>
+                <option value="DragonsEnvironment">Dragons</option>
+                <option value="CrabRaveEnvironment">Crab Rave</option>
+                <option value="OriginsEnvironment">Origins</option>
+                <option value="PanicEnvironment">Panic</option>
+                <option value="RocketEnvironment">Rocket</option>
+                <option value="GreenDayEnvironment">Green Day</option>
+                <option value="GreenDayGrenadeEnvironment">Green Day Grenade</option>
+                <option value="TimbalandEnvironment">Timbaland</option>
+                <option value="FitBeatEnvironment">FitBeat</option>
+                <option value="LinkinParkEnvironment">Linkin Park</option>
+                <option value="BTSEnvironment">BTS</option>
+                <option value="KaleidoscopeEnvironment">Kaleidoscope</option>
+                <option value="InterscopeEnvironment">Interscope</option>
+                <option value="SkrillexEnvironment">Skrillex</option>
+                <option value="BillieEnvironment">Billie</option>
+                <option value="HalloweenEnvironment">Halloween</option>
+                <option value="GagaEnvironment">Gaga</option>
+              </optgroup>
+              <optgroup label="V3 Environments">
+                <option value="WeaveEnvironment">Weave</option>
+                <option value="PyroEnvironment">Pyro</option>
+                <option value="EDMEnvironment">EDM</option>
+                <option value="TheSecondEnvironment">The Second</option>
+                <option value="LizzoEnvironment">Lizzo</option>
+                <option value="TheWeekndEnvironment">The Weeknd</option>
+                <option value="RockMixtapeEnvironment">Rock Mixtape</option>
+                <option value="Dragons2Environment">Dragons 2</option>
+                <option value="Panic2Environment">Panic 2</option>
+                <option value="QueenEnvironment">Queen</option>
+                <option value="LinkinPark2Environment">Linkin Park 2</option>
+                <option value="TheRollingStonesEnvironment">The Rolling Stones</option>
+                <option value="LatticeEnvironment">Lattice</option>
+                <option value="DaftPunkEnvironment">Daft Punk</option>
+                <option value="HipHopEnvironment">Hip Hop Mixtape</option>
+                <option value="ColliderEnvironment">Collider</option>
+                <option value="BritneyEnvironment">Britney</option>
+              </optgroup>
+              <optgroup label="360/90 Environments">
+                <option value="GlassDesertEnvironment">Glass Desert</option>
+                <option value="MultiplayerEnvironment">Multiplayer</option>
+              </optgroup>
+              </optgroup>
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Map Style</label>
+            <select id="cfg-style">
+              <option value="balanced">Balanced (Default)</option>
+              <option value="dance">Dance — Flow & Arcs</option>
+              <option value="tech">Tech — Ranked Precision</option>
+              <option value="speed">Speed — Dense Streams</option>
+              <option value="fitness">Fitness — Walls & Dodging</option>
+              <option value="chill">Chill — Minimal & Relaxed</option>
+            </select>
+          </div>
+        </div>
+        <div class="config-sliders">
+          <div class="slider-field">
+            <label>Pattern Complexity <span class="slider-val" id="val-complexity">50</span>%</label>
+            <input type="range" id="cfg-complexity" min="0" max="100" value="50">
+          </div>
+          <div class="slider-field">
+            <label>Lighting Intensity <span class="slider-val" id="val-lighting">70</span>%</label>
+            <input type="range" id="cfg-light-intensity" min="0" max="100" value="70">
+          </div>
+          <div class="slider-field">
+            <label>Note Density Bias <span class="slider-val" id="val-density">50</span>%</label>
+            <input type="range" id="cfg-density" min="0" max="100" value="50">
+          </div>
+        </div>
+        <div class="diff-select">
+          <label>Difficulties to Generate</label>
+          <div class="diff-chips">
+            <label class="chip"><input type="checkbox" value="Easy"> Easy</label>
+            <label class="chip"><input type="checkbox" value="Normal"> Normal</label>
+            <label class="chip"><input type="checkbox" value="Hard" checked> Hard</label>
+            <label class="chip"><input type="checkbox" value="Expert" checked> Expert</label>
+            <label class="chip"><input type="checkbox" value="ExpertPlus" checked> Expert+</label>
+          </div>
+        </div>
+        <div class="ranked-toggle">
+          <label class="toggle-label">
+            <input type="checkbox" id="cfg-ranked" checked>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Ranked Validation Mode
+          </label>
+        </div>
+      </section>
+
+      <!-- STEP 3: Generate -->
+      <section class="panel panel-generate" id="panel-generate">
+        <div class="panel-header">
+          <span class="step-num">03</span>
+          <h2>GENERATE &amp; EXPORT</h2>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn-generate" id="btn-generate" disabled style="flex:1">
+            <span class="btn-icon">&#9889;</span>
+            <span>FORGE MAP</span>
+          </button>
+          <button class="btn-generate" id="btn-regenerate" disabled style="flex:0.5;font-size:0.8rem;letter-spacing:2px;opacity:0.7" title="Re-generate with same audio (different patterns)">
+            <span>&#8635; REDO</span>
+          </button>
+        </div>
+        <div class="progress-area" id="progress-area" style="display:none;">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-fill"></div>
+          </div>
+          <p class="progress-text" id="progress-text">Initializing...</p>
+        </div>
+      </section>
+
+      <!-- STEP 4: Results -->
+      <section class="panel panel-results" id="panel-results" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">04</span>
+          <h2>MAP RESULTS</h2>
+        </div>
+        <div class="results-grid" id="results-grid"></div>
+        <div class="rank-display" id="rank-display"></div>
+        <!-- Note Density Timeline -->
+        <div class="density-section" id="density-section" style="margin:12px 0;">
+          <h3 style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);margin-bottom:6px;">NOTE DENSITY OVER TIME</h3>
+          <canvas id="density-canvas" width="800" height="80" style="width:100%;height:80px;border-radius:6px;background:rgba(0,0,0,0.3);"></canvas>
+        </div>
+        <!-- Pattern Distribution -->
+        <div class="pattern-breakdown" id="pattern-breakdown" style="margin:12px 0;font-size:0.7rem;color:#aaa;"></div>
+        <!-- Onset Sync Quality -->
+        <div class="onset-sync" id="onset-sync" style="margin:8px 0;font-size:0.7rem;"></div>
+        <div class="export-actions">
+          <button class="btn-export" id="btn-export">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download .zip
+          </button>
+        </div>
+      </section>
+
+      <!-- Note Grid Preview -->
+      <section class="panel panel-grid" id="panel-grid" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9632;</span>
+          <h2>NOTE GRID PREVIEW</h2>
+        </div>
+        <div class="grid-preview-container">
+          <canvas id="grid-canvas" width="400" height="320"></canvas>
+          <div class="grid-stats" id="grid-stats"></div>
+        </div>
+      </section>
+
+      <!-- Generation Log -->
+      <section class="panel panel-log" id="panel-log" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9998;</span>
+          <h2>GENERATION LOG</h2>
+        </div>
+        <div class="gen-log" id="gen-log"></div>
+      </section>
+
+      <!-- Live Waveform + Audio Preview -->
+      <section class="panel panel-viz" id="panel-viz" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9835;</span>
+          <h2>AUDIO ANALYSIS</h2>
+        </div>
+        <div class="audio-player-row">
+          <button class="btn-play" id="btn-play" title="Play/Pause">
+            <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><polygon points="5,3 19,12 5,21"/></svg>
+            <svg id="icon-pause" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="display:none"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+          </button>
+          <div class="audio-time" id="audio-time">0:00 / 0:00</div>
+        </div>
+        <canvas id="waveform-canvas" width="900" height="160"></canvas>
+        <div class="spectral-bands" id="spectral-bands">
+          <div class="band-meter"><div class="band-label">BASS</div><div class="band-bar-track"><div class="band-bar-fill band-bass" id="band-bass"></div></div></div>
+          <div class="band-meter"><div class="band-label">MID</div><div class="band-bar-track"><div class="band-bar-fill band-mid" id="band-mid"></div></div></div>
+          <div class="band-meter"><div class="band-label">HIGH</div><div class="band-bar-track"><div class="band-bar-fill band-high" id="band-high"></div></div></div>
+        </div>
+        <div class="viz-stats" id="viz-stats"></div>
+        <div class="section-timeline" id="section-timeline"></div>
+      </section>
+
+      <!-- Per-Difficulty Breakdown -->
+      <section class="panel panel-diff-stats" id="panel-diff-stats" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9733;</span>
+          <h2>PER-DIFFICULTY BREAKDOWN</h2>
+        </div>
+        <div class="diff-stats-table" id="diff-stats-table"></div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>BeatForge AI &mdash; Schema 3.3.0 &bull; Beat Saber 1.40+ &bull; Flat ZIP Export &bull; JSZip Powered</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
