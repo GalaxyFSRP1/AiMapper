@@ -1028,8 +1028,10 @@
       }
     }
 
-    // No agreement — trust energy method most (or onset if energy failed)
-    return energyBPM > 0 ? energyBPM : (onsetBPM > 0 ? onsetBPM : 120);
+    // No agreement — prefer BPM in the common 90-160 range
+    const ranked = candidates.map(b => ({ b, score: (b >= 90 && b <= 160) ? 2 : (b >= 70 && b <= 180) ? 1 : 0 }));
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked[0].b;
   }
 
   // Energy curve autocorrelation — THE most reliable BPM method
@@ -1940,6 +1942,95 @@
     [D.RIGHT]:      { best: [D.LEFT], good: [D.DOWN_LEFT, D.UP_LEFT] },
   };
 
+  // ============================================================
+  // ATTENTION-BASED PATTERN SCORER
+  // Looks at recent note history to score candidate placements.
+  // Uses a sliding window of the last N notes per hand and
+  // scores each candidate based on:
+  //   - Angle quality (attention over recent directions)
+  //   - Position variety (attention over recent positions)
+  //   - Musical alignment (energy/bass at the beat)
+  //   - Repetition penalty (self-attention for repeated patterns)
+  // ============================================================
+
+  function scoreCandidate(dir, x, y, hand, hs, beat, section, energy) {
+    const h = hs[hand];
+    const recent = recentDirs[hand] || [];
+    let score = 5.0; // Base score
+
+    // 1. ANGLE QUALITY — reward 180° changes, penalize < 135°
+    if (h.lastBeat > -5) {
+      const angle = angleDiff(DIR_ANGLE[h.lastDir], DIR_ANGLE[dir]);
+      if (angle >= 170) score += 2.0;       // Perfect opposite
+      else if (angle >= 135) score += 1.0;   // Good diagonal
+      else if (angle >= 90) score -= 0.5;    // Acceptable but not great
+      else score -= 3.0;                      // Wrist breaker
+    }
+
+    // 2. POSITION VARIETY — penalize staying in same cell, reward movement
+    if (h.lastBeat > -5) {
+      const dx = Math.abs(x - h.lastX);
+      const dy = Math.abs(y - h.lastY);
+      if (dx === 0 && dy === 0) score -= 1.0;     // Same cell = boring
+      else if (dx <= 1 && dy <= 1) score += 0.5;   // Smooth 1-cell move = good
+      else score -= 0.5;                             // Teleporting = bad
+    }
+
+    // 3. REPETITION PENALTY — attention over recent 6 directions
+    if (recent.length >= 3) {
+      let repeatCount = 0;
+      for (const rd of recent) { if (rd === dir) repeatCount++; }
+      // Penalize directions that appear more than twice in recent history
+      if (repeatCount >= 3) score -= 1.5;
+      else if (repeatCount >= 2) score -= 0.5;
+    }
+
+    // 4. DIRECTION DIVERSITY — reward using directions not seen recently
+    if (recent.length >= 4) {
+      const uniqueDirs = new Set(recent);
+      if (!uniqueDirs.has(dir)) score += 1.0; // Novel direction = variety bonus
+    }
+
+    // 5. MUSICAL ALIGNMENT — reward placement on strong beats
+    const beatPos = beat % 1;
+    if (Math.abs(beatPos) < 0.05 || Math.abs(beatPos - 0.5) < 0.05) score += 0.5; // On-beat
+    if (energy > 0.7) score += 0.5; // High energy moment
+
+    // 6. SECTION AWARENESS — different sections prefer different patterns
+    if (section.type === SEC.VERSE || section.type === SEC.BREAK) {
+      // Calm sections: reward simple down/up, penalize diagonals
+      if (dir === D.DOWN || dir === D.UP) score += 0.5;
+    } else if (section.type === SEC.DROP || section.type === SEC.CHORUS) {
+      // Energetic: reward variety including diagonals
+      if (dir !== D.DOWN && dir !== D.UP) score += 0.3;
+    }
+
+    // 7. HAND NATURAL PREFERENCE
+    if (hand === C.RED) {
+      if (dir === D.DOWN_LEFT || dir === D.UP_RIGHT) score += 0.3; // Natural for left hand
+    } else {
+      if (dir === D.DOWN_RIGHT || dir === D.UP_LEFT) score += 0.3; // Natural for right hand
+    }
+
+    return score;
+  }
+
+  // Select the best direction from candidates using attention scoring
+  function selectBestDirection(candidates, hand, hs, beat, section, energy) {
+    if (candidates.length <= 1) return candidates[0] || D.DOWN;
+
+    let bestDir = candidates[0], bestScore = -999;
+    const pos = getFlowPosition(hand, candidates[0], hs, section, energy);
+
+    for (const dir of candidates) {
+      const p = getFlowPosition(hand, dir, hs, section, energy);
+      const s = scoreCandidate(dir, p.x, p.y, hand, hs, beat, section, energy);
+      if (s > bestScore) { bestScore = s; bestDir = dir; }
+    }
+    return bestDir;
+  }
+
+  // BSMG angle rules + hand preference + attention scoring
   function placeGridNote(arr, beat, hand, hs, section, energy) {
     const h = hs[hand];
     const beatGap = beat - h.lastBeat;
@@ -1964,13 +2055,8 @@
         const allSafe = [...bestMatch, ...goodMatch];
 
         if (allSafe.length > 0) {
-          // In calm sections pick the most comfortable (first = best angle)
-          if (section.type === SEC.VERSE || section.type === SEC.INTRO || section.type === SEC.BREAK) {
-            dir = allSafe[0];
-          } else {
-            // In energetic sections allow variety but still angle-safe
-            dir = pickRandom(allSafe);
-          }
+          // USE ATTENTION SCORER to pick the best direction
+          dir = selectBestDirection(allSafe, hand, hs, beat, section, energy);
         } else {
           // Fallback: straight down or up based on parity
           dir = h.parity === "fore" ? D.DOWN : D.UP;
@@ -2314,72 +2400,63 @@
   }
 
   // ---- CHAINS (BURST SLIDERS) ----
-  // Chains connect FROM an existing note and slide to a tail position.
-  // They should: use the note's position as head, vary direction,
-  // and only appear where there's a gap after the note.
+  // Chains attach to existing notes and slide to a tail position.
+  // STRICT LIMITS: max 1 chain per 4 beats, only on strong beats, capped total count
   function generateChains(notes, bpm, settings, totalBeats) {
     const chains = [];
     if (settings.chainRate <= 0) return chains;
 
-    // Find good chain candidates — notes with a gap after them
+    const maxChains = Math.max(2, Math.floor(totalBeats / 16)); // ~1 chain per 16 beats
+    let lastChainBeat = -10;
+
     for (let color = 0; color <= 1; color++) {
       const hand = notes.filter(n => n.c === color);
       for (let i = 0; i < hand.length - 1; i++) {
-        const curr = hand[i];
-        const next = hand[i + 1];
+        if (chains.length >= maxChains) break;
+
+        const curr = hand[i], next = hand[i + 1];
         const gap = next.b - curr.b;
 
-        // Chain needs 0.5-2 beat gap after the note
-        if (gap < 0.5 || gap > 2.0) continue;
-        if (Math.random() > settings.chainRate) continue;
+        // Needs 0.75-2.5 beat gap and minimum 4 beats since last chain
+        if (gap < 0.75 || gap > 2.5) continue;
+        if (curr.b - lastChainBeat < 4) continue;
+
+        // Low probability — chains are special, not common
+        if (Math.random() > settings.chainRate * 0.4) continue;
 
         const t = beatToTime(curr.b, bpm);
         const sec = getSectionAt(t);
         const energy = getEnergyAtTime(t);
+        const bass = getNormBassAt(t);
 
-        // Only in energetic sections
-        if (energy < 0.35 || sec.type === SEC.BREAK || sec.type === SEC.INTRO) continue;
+        // Only on strong musical moments in energetic sections
+        if (energy < 0.5 || sec.type === SEC.BREAK || sec.type === SEC.INTRO || sec.type === SEC.OUTRO) continue;
+        if (bass < 0.4 && energy < 0.6) continue; // Need bass hit or high energy
 
-        // Chain head = the note's position and direction
-        const headX = curr.x;
-        const headY = curr.y;
-        const headDir = curr.d;
+        // Only on downbeats (whole beats)
+        if (Math.abs(curr.b - Math.round(curr.b)) > 0.15) continue;
 
-        // Chain tail = where the slide ends, based on direction
+        const headX = curr.x, headY = curr.y, headDir = curr.d;
         let tailX = headX, tailY = headY;
-        const chainDur = Math.min(gap * 0.6, 1.0); // Chain takes 60% of the gap, max 1 beat
+        const chainDur = Math.min(gap * 0.5, 0.75);
         const tailBeat = curr.b + chainDur;
 
-        // Slide direction follows the note's cut direction
-        if (IS_DOWN.includes(headDir)) {
-          tailY = Math.max(0, headY - 1); // Slide downward
-        } else if (IS_UP.includes(headDir)) {
-          tailY = Math.min(2, headY + 1); // Slide upward
-        }
-        if (IS_LEFT.includes(headDir)) {
-          tailX = Math.max(0, headX - 1); // Slide left
-        } else if (IS_RIGHT.includes(headDir)) {
-          tailX = Math.min(3, headX + 1); // Slide right
-        }
+        // Tail follows cut direction
+        if (IS_DOWN.includes(headDir)) tailY = Math.max(0, headY - 1);
+        else if (IS_UP.includes(headDir)) tailY = Math.min(2, headY + 1);
+        if (IS_LEFT.includes(headDir)) tailX = Math.max(0, headX - 1);
+        else if (IS_RIGHT.includes(headDir)) tailX = Math.min(3, headX + 1);
 
-        // Don't overlap with the next note
-        if (tailBeat >= next.b - 0.1) continue;
+        if (tailBeat >= next.b - 0.2) continue;
 
-        // Slice count based on energy and gap length
-        const sliceCount = Math.max(2, Math.min(8, Math.floor(energy * 6 + chainDur * 3)));
+        const sliceCount = Math.max(3, Math.min(6, Math.floor(energy * 5)));
 
         chains.push({
-          b: curr.b,
-          c: color,
-          x: headX,
-          y: headY,
-          d: headDir,
-          tb: rb(tailBeat),
-          tx: tailX,
-          ty: tailY,
-          sc: sliceCount,
-          s: rb(chainDur / sliceCount), // Squish factor
+          b: curr.b, c: color, x: headX, y: headY, d: headDir,
+          tb: rb(tailBeat), tx: tailX, ty: tailY,
+          sc: sliceCount, s: rb(chainDur / sliceCount),
         });
+        lastChainBeat = curr.b;
       }
     }
     return chains;
@@ -3185,19 +3262,39 @@
   function diffRank(n) { return { Easy: 1, Normal: 3, Hard: 5, Expert: 7, ExpertPlus: 9 }[n] || 7; }
 
   function buildDifficultyDat(dd) {
-    const { notes, arcs, chains, bombs, walls, lighting } = dd;
+    const { notes, arcs, chains, bombs, walls, lighting, settings } = dd;
+
+    // BPM events — from variable BPM regions (only if song has tempo changes)
+    const bpmEvents = [];
+    if (state.bpmRegions.length > 1) {
+      for (let i = 1; i < state.bpmRegions.length; i++) {
+        const r = state.bpmRegions[i];
+        const prevR = state.bpmRegions[i - 1];
+        // Beat position where this BPM region starts
+        let regionBeat = 0;
+        for (let j = 0; j < i; j++) {
+          regionBeat += ((state.bpmRegions[j].endTime - state.bpmRegions[j].startTime) * state.bpmRegions[j].bpm) / 60;
+        }
+        bpmEvents.push({ b: rb(regionBeat), m: r.bpm });
+      }
+    }
+
     return {
-      version: SCHEMA_VERSION, bpmEvents: [], rotationEvents: [],
+      version: SCHEMA_VERSION,
+      bpmEvents: bpmEvents,
+      rotationEvents: [],
       colorNotes: notes.map(n => ({ b: rb(n.b), x: n.x, y: n.y, c: n.c, d: n.d, a: n.a })),
       bombNotes: bombs.map(bm => ({ b: rb(bm.b), x: bm.x, y: bm.y })),
       obstacles: walls.map(w => ({ b: rb(w.b), x: w.x, y: w.y, d: rb(w.d), w: w.w, h: w.h })),
       sliders: arcs.map(a => ({ b: rb(a.b), c: a.c, x: a.x, y: a.y, d: a.d, mu: a.mu, tb: rb(a.tb), tx: a.tx, ty: a.ty, tc: a.tc, tmu: a.tmu, m: a.m })),
       burstSliders: chains.map(c => ({ b: rb(c.b), c: c.c, x: c.x, y: c.y, d: c.d, tb: rb(c.tb), tx: c.tx, ty: c.ty, sc: c.sc, s: c.s })),
       basicBeatmapEvents: lighting.map(ev => ({ b: rb(ev.b), et: ev.et, i: ev.i, f: parseFloat(ev.f.toFixed(3)) })),
-      colorBoostBeatmapEvents: [], lightColorEventBoxGroups: [], lightRotationEventBoxGroups: [],
+      colorBoostBeatmapEvents: [],
+      lightColorEventBoxGroups: [], lightRotationEventBoxGroups: [],
       lightTranslationEventBoxGroups: [], vfxEventBoxGroups: [],
       _fxEventsCollection: { _fl: [], _il: [] },
-      basicEventTypesWithKeywords: { d: [] }, useNormalEventsAsCompatibleEvents: false,
+      basicEventTypesWithKeywords: { d: [] },
+      useNormalEventsAsCompatibleEvents: false,
     };
   }
 
