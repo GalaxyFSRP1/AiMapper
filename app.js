@@ -273,7 +273,7 @@
     return 0;
   }
 
-  // Core position selection — keeps notes in bottom 2 rows, smooth movement
+  // Core position selection — natural human-like grid movement
   function getFlowPosition(hand, dir, hs, section, energy) {
     const state_h = hs[hand];
     const terr = TERRITORY[hand];
@@ -286,35 +286,54 @@
     let prevX = gap > 5 ? home.x : state_h.lastX;
     let prevY = gap > 5 ? home.y : state_h.lastY;
 
-    // Y: move toward ideal row, max 1 step, bias toward bottom
+    // Y: move toward ideal row, max 1 step
     let targetY = idealY;
     if (Math.abs(targetY - prevY) > 1) {
       targetY = prevY + (targetY > prevY ? 1 : -1);
     }
-    // Strong bias to stay in bottom two rows — pull back down if at y=2
-    if (prevY === 2 && targetY === 2 && energy < 0.75) {
-      targetY = 1; // Come back down unless it's a high-energy moment
-    }
+    // Pull back from top row unless high energy
+    if (prevY === 2 && targetY === 2 && energy < 0.75) targetY = 1;
 
-    // X: home column bias with ML adjustment
-    let targetX = prevX + colBias;
+    // X: varied movement based on section and swing count
+    let targetX = prevX;
+    const swingNum = state_h.swingCount || 0;
 
     if (section.type === SEC.VERSE || section.type === SEC.INTRO || section.type === SEC.BREAK) {
-      if (Math.random() < mlBias.homeStrength) {
-        targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
+      // Calm: mostly home column, occasional small movements
+      if (swingNum % 4 === 0 && prevX !== home.x) {
+        targetX = prevX + (home.x > prevX ? 1 : -1); // Return home every 4 swings
+      } else {
+        targetX = prevX + colBias;
       }
     } else if (section.type === SEC.DROP || section.type === SEC.CHORUS) {
-      if (energy > 0.7 && Math.random() < mlBias.moveRange * 0.3) {
-        targetX = prevX + (Math.random() > 0.5 ? 1 : -1);
-      } else if (Math.random() < mlBias.homeStrength * 0.5) {
+      // Energetic: wider movement pattern — alternate between home and edge
+      if (energy > 0.6 && swingNum % 6 < 2) {
+        // Move toward edge for variety
+        targetX = hand === C.RED ? Math.max(0, prevX - 1) : Math.min(3, prevX + 1);
+      } else if (swingNum % 6 >= 4) {
+        // Return toward home
         targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
+      } else {
+        targetX = prevX + colBias;
+      }
+    } else if (section.type === SEC.BUILDUP) {
+      // Buildup: gradually widen from home
+      const buildProgress = energy;
+      if (Math.random() < buildProgress * 0.3) {
+        targetX = prevX + (Math.random() > 0.5 ? 1 : -1);
+      } else {
+        targetX = prevX + colBias;
       }
     } else {
-      if (Math.random() < mlBias.homeStrength * 0.7) {
-        targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
-      }
+      targetX = prevX + colBias;
     }
 
+    // ML home bias — but less aggressive than before
+    if (Math.random() < mlBias.homeStrength * 0.3 && targetX !== home.x) {
+      targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
+    }
+
+    // Clamp
     targetX = Math.max(terr.minX, Math.min(terr.maxX, targetX));
     targetY = Math.max(0, Math.min(2, targetY));
     if (Math.abs(targetX - prevX) > 1) targetX = prevX + (targetX > prevX ? 1 : -1);
@@ -1612,11 +1631,17 @@
 
     logGen(totalBeats, "pattern", "Final: " + bestNotes.length + " notes \u2014 Doubles: " + countDoubles(bestNotes) + " \u2014 Comfort: " + bestQuality.comfortScore.toFixed(1));
 
-    const arcs = generateArcs(bestNotes, bpm, settings);
-    logGen(totalBeats, "pattern", "Arcs: " + arcs.length);
-    const chains = generateChains(bestNotes, bpm, settings, totalBeats);
-    const bombs = generateBombs(bestNotes, bpm, settings, totalBeats);
-    const walls = generateWalls(bestNotes, bpm, settings, totalBeats);
+    // Check element toggles
+    const wantArcs = !$("#tog-arcs") || $("#tog-arcs").checked;
+    const wantChains = !$("#tog-chains") || $("#tog-chains").checked;
+    const wantBombs = !$("#tog-bombs") || $("#tog-bombs").checked;
+    const wantWalls = !$("#tog-walls") || $("#tog-walls").checked;
+
+    const arcs = wantArcs ? generateArcs(bestNotes, bpm, settings) : [];
+    logGen(totalBeats, "pattern", "Arcs: " + arcs.length + (wantArcs ? "" : " (disabled)"));
+    const chains = wantChains ? generateChains(bestNotes, bpm, settings, totalBeats) : [];
+    const bombs = wantBombs ? generateBombs(bestNotes, bpm, settings, totalBeats) : [];
+    const walls = wantWalls ? generateWalls(bestNotes, bpm, settings, totalBeats) : [];
     const lighting = generateLighting(bpm, totalBeats);
     logGen(totalBeats, "pattern", "Lighting events: " + lighting.length);
     if (lighting.length < MIN_LIGHTING_EVENTS) throw new Error("Lighting Missing");
@@ -2289,53 +2314,73 @@
   }
 
   // ---- CHAINS (BURST SLIDERS) ----
-  // v3.3.0 burstSliders need: b, c, x, y, d, tb, tx, ty, sc, s
-  // The head (b,x,y,d) is where the chain starts, tail (tb,tx,ty) is where it ends
+  // Chains connect FROM an existing note and slide to a tail position.
+  // They should: use the note's position as head, vary direction,
+  // and only appear where there's a gap after the note.
   function generateChains(notes, bpm, settings, totalBeats) {
     const chains = [];
     if (settings.chainRate <= 0) return chains;
 
-    for (let beat = 2; beat < totalBeats - 2; beat += 2) {
-      if (Math.random() > settings.chainRate) continue;
-      const timeSec = beatToTime(beat, bpm);
-      const sec = getSectionAt(timeSec);
-      const energy = getEnergyAtTime(timeSec);
+    // Find good chain candidates — notes with a gap after them
+    for (let color = 0; color <= 1; color++) {
+      const hand = notes.filter(n => n.c === color);
+      for (let i = 0; i < hand.length - 1; i++) {
+        const curr = hand[i];
+        const next = hand[i + 1];
+        const gap = next.b - curr.b;
 
-      // Only in energetic sections with enough energy
-      if (energy < 0.4 || sec.type === SEC.BREAK || sec.type === SEC.INTRO || sec.type === SEC.OUTRO) continue;
+        // Chain needs 0.5-2 beat gap after the note
+        if (gap < 0.5 || gap > 2.0) continue;
+        if (Math.random() > settings.chainRate) continue;
 
-      // Don't overlap with notes
-      if (notes.some(n => Math.abs(n.b - beat) < 0.5)) continue;
+        const t = beatToTime(curr.b, bpm);
+        const sec = getSectionAt(t);
+        const energy = getEnergyAtTime(t);
 
-      const color = Math.random() > 0.5 ? C.RED : C.BLUE;
-      const home = HOME[color];
-      const sliceCount = 3 + Math.floor(Math.random() * 4); // 3-6 links
-      const chainDuration = 0.5; // Chain spans half a beat
+        // Only in energetic sections
+        if (energy < 0.35 || sec.type === SEC.BREAK || sec.type === SEC.INTRO) continue;
 
-      // Head position: middle row, direction down
-      const headX = home.x;
-      const headY = 1;
-      const dir = D.DOWN;
+        // Chain head = the note's position and direction
+        const headX = curr.x;
+        const headY = curr.y;
+        const headDir = curr.d;
 
-      // Tail position: chain ends at bottom row
-      const tailX = headX;
-      const tailY = 0;
-      const tailBeat = beat + chainDuration;
+        // Chain tail = where the slide ends, based on direction
+        let tailX = headX, tailY = headY;
+        const chainDur = Math.min(gap * 0.6, 1.0); // Chain takes 60% of the gap, max 1 beat
+        const tailBeat = curr.b + chainDur;
 
-      if (tailBeat >= totalBeats - 0.5) continue;
+        // Slide direction follows the note's cut direction
+        if (IS_DOWN.includes(headDir)) {
+          tailY = Math.max(0, headY - 1); // Slide downward
+        } else if (IS_UP.includes(headDir)) {
+          tailY = Math.min(2, headY + 1); // Slide upward
+        }
+        if (IS_LEFT.includes(headDir)) {
+          tailX = Math.max(0, headX - 1); // Slide left
+        } else if (IS_RIGHT.includes(headDir)) {
+          tailX = Math.min(3, headX + 1); // Slide right
+        }
 
-      chains.push({
-        b: beat,
-        c: color,
-        x: headX,
-        y: headY,
-        d: dir,
-        tb: tailBeat,
-        tx: tailX,
-        ty: tailY,
-        sc: sliceCount,
-        s: 0.5,
-      });
+        // Don't overlap with the next note
+        if (tailBeat >= next.b - 0.1) continue;
+
+        // Slice count based on energy and gap length
+        const sliceCount = Math.max(2, Math.min(8, Math.floor(energy * 6 + chainDur * 3)));
+
+        chains.push({
+          b: curr.b,
+          c: color,
+          x: headX,
+          y: headY,
+          d: headDir,
+          tb: rb(tailBeat),
+          tx: tailX,
+          ty: tailY,
+          sc: sliceCount,
+          s: rb(chainDur / sliceCount), // Squish factor
+        });
+      }
     }
     return chains;
   }
