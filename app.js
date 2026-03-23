@@ -1573,7 +1573,14 @@
   function beatToTime(beat, bpm) { return (beat / bpm) * 60; }
   function timeToBeat(time, bpm) { return (time * bpm) / 60; }
   function quantizeToBeat(time, bpm, sub) { return Math.round(time * (bpm / 60) * sub) / sub; }
-  function getSelectedDifficulties() { const d = []; $$(".diff-chips input:checked").forEach(el => d.push(el.value)); return d; }
+  function getSelectedDifficulties() {
+    const valid = ["Easy", "Normal", "Hard", "Expert", "ExpertPlus"];
+    const d = [];
+    $$(".diff-chips input:checked").forEach(el => {
+      if (valid.includes(el.value)) d.push(el.value);
+    });
+    return d;
+  }
   function pickRandom(arr) {
     // Use generation seed to shift the random selection
     const idx = Math.floor(Math.random() * arr.length);

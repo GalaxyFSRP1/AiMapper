@@ -401,6 +401,7 @@ body::after {
 }
 
 .diff-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.element-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .chip {
   display: flex;
