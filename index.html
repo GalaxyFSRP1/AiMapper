@@ -11,43 +11,35 @@
 </head>
 <body>
   <!-- LOADING SCREEN -->
-  <div id="loading-screen" style="position:fixed;inset:0;z-index:9999;background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.6s;">
-    <div style="text-align:center;">
-      <svg viewBox="0 0 48 48" fill="none" width="80" height="80" style="animation:loadSpin 2s linear infinite;">
+  <div id="loading-screen" style="position:fixed;inset:0;z-index:9999;background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s;overflow:hidden;">
+    <canvas id="load-particles" style="position:absolute;inset:0;pointer-events:none;"></canvas>
+    <div style="text-align:center;position:relative;z-index:1;">
+      <svg viewBox="0 0 48 48" fill="none" width="90" height="90" style="animation:loadSpin 1.5s ease-in-out infinite;filter:drop-shadow(0 0 20px #00e5ff);">
         <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="#00e5ff" stroke-width="2" fill="none"/>
-        <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="#00e5ff" opacity="0.3"/>
-        <circle cx="24" cy="24" r="4" fill="#ff1744"/>
+        <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="#00e5ff" opacity="0.25"/>
+        <circle cx="24" cy="24" r="5" fill="#ff1744" opacity="0.8"/>
+        <circle cx="24" cy="24" r="3" fill="#fff"/>
       </svg>
-      <h1 style="font-family:'Orbitron',monospace;font-size:2.2rem;color:#00e5ff;margin:20px 0 8px;letter-spacing:8px;">BEATFORGE</h1>
-      <p style="font-family:'Rajdhani',sans-serif;color:#556;font-size:0.9rem;letter-spacing:3px;">AI AUTO-MAPPER</p>
-      <div id="load-countdown" style="font-family:'Orbitron',monospace;font-size:3rem;color:#ff1744;margin-top:30px;font-weight:900;">5</div>
-      <div id="load-bar" style="width:200px;height:3px;background:#1a1a2e;border-radius:2px;margin:16px auto 0;overflow:hidden;">
-        <div id="load-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#ff1744,#00e5ff);transition:width 1s linear;"></div>
+      <h1 style="font-family:'Orbitron',monospace;font-size:2.4rem;color:#00e5ff;margin:24px 0 6px;letter-spacing:10px;text-shadow:0 0 30px rgba(0,229,255,0.5);">BEATFORGE</h1>
+      <p style="font-family:'Rajdhani',sans-serif;color:#445;font-size:0.85rem;letter-spacing:4px;">AI AUTO-MAPPER ENGINE</p>
+      <div id="load-countdown" style="font-family:'Orbitron',monospace;font-size:3.5rem;color:#ff1744;margin-top:24px;font-weight:900;text-shadow:0 0 20px rgba(255,23,68,0.5);">5</div>
+      <div style="width:240px;height:3px;background:#111;border-radius:2px;margin:16px auto 0;overflow:hidden;">
+        <div id="load-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#ff1744,#ff6090,#00e5ff);transition:width 0.85s ease;border-radius:2px;"></div>
       </div>
-      <p style="font-family:'Rajdhani',sans-serif;color:#334;font-size:0.7rem;margin-top:12px;">Loading systems...</p>
+      <div id="load-status" style="font-family:'Rajdhani',sans-serif;color:#556;font-size:0.7rem;margin-top:14px;height:16px;letter-spacing:1px;"></div>
     </div>
   </div>
   <style>
-    @keyframes loadSpin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+    @keyframes loadSpin { 0%{transform:rotate(0deg) scale(1)} 50%{transform:rotate(180deg) scale(1.08)} 100%{transform:rotate(360deg) scale(1)} }
   </style>
   <script>
     (function(){
-      const start = Date.now();
-      const cd = document.getElementById('load-countdown');
-      const fill = document.getElementById('load-bar-fill');
-      const screen = document.getElementById('loading-screen');
-      let count = 5;
-      fill.style.width = '0%';
-      const iv = setInterval(function(){
-        count--;
-        if(cd) cd.textContent = count;
-        if(fill) fill.style.width = ((5-count)/5*100)+'%';
-        if(count <= 0){
-          clearInterval(iv);
-          screen.style.opacity = '0';
-          setTimeout(function(){ screen.style.display='none'; }, 600);
-        }
-      }, 1000);
+      var pc=document.getElementById('load-particles');
+      if(pc){var cx=pc.getContext('2d');pc.width=window.innerWidth;pc.height=window.innerHeight;var pts=[];for(var i=0;i<50;i++)pts.push({x:Math.random()*pc.width,y:Math.random()*pc.height,vx:(Math.random()-0.5)*0.6,vy:(Math.random()-0.5)*0.6,r:Math.random()*2+0.5,h:Math.random()>0.5?190:350});function dp(){cx.clearRect(0,0,pc.width,pc.height);for(var p of pts){p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=pc.width;if(p.x>pc.width)p.x=0;if(p.y<0)p.y=pc.height;if(p.y>pc.height)p.y=0;cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle='hsla('+p.h+',100%,60%,0.2)';cx.fill();}if(document.getElementById('loading-screen').style.display!=='none')requestAnimationFrame(dp);}dp();}
+      var msgs=['Initializing audio engine...','Loading pattern vocabulary...','Calibrating spectral analyzer...','Preparing beat grid system...','Systems online — ready to forge!'];
+      var cd=document.getElementById('load-countdown'),fill=document.getElementById('load-bar-fill'),st=document.getElementById('load-status'),scr=document.getElementById('loading-screen');
+      var c=5;if(fill)fill.style.width='0%';
+      var iv=setInterval(function(){c--;if(cd)cd.textContent=c;if(fill)fill.style.width=((5-c)/5*100)+'%';if(st&&msgs[5-c-1])st.textContent=msgs[5-c-1];if(c<=0){clearInterval(iv);scr.style.opacity='0';setTimeout(function(){scr.style.display='none';},800);}},850);
     })();
   </script>
 

@@ -256,30 +256,29 @@
   };
 
   // Row selection — mostly y=0 and y=1, y=2 only for emphasis
-  // Row placement — balanced across 3 rows with top for emphasis
-  // Target: ~45% bottom, ~40% middle, ~15% top
+  // Row placement — energy-driven, no periodic patterns
   function getTargetRow(dir, energy, section, swingCount) {
-    const swing = swingCount || 0;
-
-    // DROP/CHORUS: use all 3 rows based on energy
+    // DROP/CHORUS: energy determines row distribution
     if (section.type === SEC.DROP || section.type === SEC.CHORUS) {
-      if (energy > 0.7 && IS_DOWN.includes(dir) && swing % 5 === 0) return 2; // Top row every 5th swing on strong beats
-      if (IS_DOWN.includes(dir)) return swing % 3 === 0 ? 1 : 0; // Alternate mid/bottom for down
-      if (IS_UP.includes(dir)) return 0;
-      return 1;
+      if (IS_DOWN.includes(dir)) {
+        // High energy → occasional top row (15%), mostly mid/bottom
+        if (energy > 0.7 && Math.random() < 0.15) return 2;
+        return Math.random() < 0.55 ? 1 : 0;  // 55% mid, 30% bottom
+      }
+      return 0; // Up-swings from bottom
     }
 
-    // BUILDUP: gradually introduce top row
+    // BUILDUP: top row emerges as energy rises
     if (section.type === SEC.BUILDUP) {
-      if (energy > 0.65 && IS_DOWN.includes(dir) && swing % 6 === 0) return 2;
-      if (IS_DOWN.includes(dir)) return 1;
+      if (IS_DOWN.includes(dir) && energy > 0.6 && Math.random() < energy * 0.12) return 2;
+      if (IS_DOWN.includes(dir)) return Math.random() < 0.5 ? 1 : 0;
       return 0;
     }
 
-    // VERSE/INTRO/BREAK: mostly bottom two rows, rare middle
-    if (IS_DOWN.includes(dir)) return swing % 4 === 0 ? 1 : 0; // Mostly bottom, some middle
+    // VERSE/INTRO/BREAK: mostly bottom two rows
+    if (IS_DOWN.includes(dir)) return Math.random() < 0.4 ? 1 : 0;
     if (IS_UP.includes(dir)) return 0;
-    return 1;
+    return Math.random() < 0.6 ? 1 : 0;
   }
 
   function getDirColumnBias(dir, hand) {
@@ -288,67 +287,58 @@
     return 0;
   }
 
-  // Core position selection — natural human-like grid movement
+  // Core position selection — organic movement, no periodic cycles
   function getFlowPosition(hand, dir, hs, section, energy) {
     const state_h = hs[hand];
     const terr = TERRITORY[hand];
     const home = HOME[hand];
     const idealY = getTargetRow(dir, energy, section, state_h.swingCount);
     const colBias = getDirColumnBias(dir, hand);
-    const gap = state_h.lastBeat < -5 ? 99 : 0;
+    const isReset = state_h.lastBeat < -5;
     const mlBias = getMLPositionBias();
 
-    let prevX = gap > 5 ? home.x : state_h.lastX;
-    let prevY = gap > 5 ? home.y : state_h.lastY;
+    let prevX = isReset ? home.x : state_h.lastX;
+    let prevY = isReset ? home.y : state_h.lastY;
 
-    // Y: move toward ideal row, max 1 step
+    // Y: move toward ideal, max 1 step
     let targetY = idealY;
-    if (Math.abs(targetY - prevY) > 1) {
-      targetY = prevY + (targetY > prevY ? 1 : -1);
-    }
-    // Pull back from top row unless high energy
-    if (prevY === 2 && targetY === 2 && energy < 0.75) targetY = 1;
+    if (Math.abs(targetY - prevY) > 1) targetY = prevY + (targetY > prevY ? 1 : -1);
+    if (prevY === 2 && targetY === 2 && energy < 0.7) targetY = 1;
 
-    // X: varied movement based on section and swing count
+    // X: ORGANIC MOVEMENT — driven by energy + randomness, no fixed cycles
     let targetX = prevX;
-    const swingNum = state_h.swingCount || 0;
 
-    if (section.type === SEC.VERSE || section.type === SEC.INTRO || section.type === SEC.BREAK) {
-      // Calm: mostly home column, occasional small movements
-      if (swingNum % 4 === 0 && prevX !== home.x) {
-        targetX = prevX + (home.x > prevX ? 1 : -1); // Return home every 4 swings
+    // Movement probability scales with energy and section intensity
+    const moveChance = section.type === SEC.DROP || section.type === SEC.CHORUS
+      ? 0.25 + energy * 0.35  // 25-60% chance to move in energetic sections
+      : section.type === SEC.BUILDUP
+        ? 0.15 + energy * 0.25  // 15-40% in buildups
+        : 0.08;  // 8% in calm sections — mostly stay put
+
+    if (Math.random() < moveChance) {
+      // Decide: move toward edge, move toward home, or follow direction bias
+      const roll = Math.random();
+      if (roll < 0.4 && energy > 0.5) {
+        // EDGE PUSH — move outward from center for wider patterns
+        targetX = hand === C.RED ? Math.max(terr.minX, prevX - 1) : Math.min(terr.maxX, prevX + 1);
+      } else if (roll < 0.7 || energy < 0.3) {
+        // HOME PULL — drift back toward home column
+        if (prevX !== home.x) targetX = prevX + (home.x > prevX ? 1 : -1);
       } else {
-        targetX = prevX + colBias;
-      }
-    } else if (section.type === SEC.DROP || section.type === SEC.CHORUS) {
-      // Energetic: wider movement pattern — alternate between home and edge
-      if (energy > 0.6 && swingNum % 6 < 2) {
-        // Move toward edge for variety
-        targetX = hand === C.RED ? Math.max(0, prevX - 1) : Math.min(3, prevX + 1);
-      } else if (swingNum % 6 >= 4) {
-        // Return toward home
-        targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
-      } else {
-        targetX = prevX + colBias;
-      }
-    } else if (section.type === SEC.BUILDUP) {
-      // Buildup: gradually widen from home
-      const buildProgress = energy;
-      if (Math.random() < buildProgress * 0.3) {
-        targetX = prevX + (Math.random() > 0.5 ? 1 : -1);
-      } else {
+        // DIRECTION FOLLOW — move where the swing points
         targetX = prevX + colBias;
       }
     } else {
-      targetX = prevX + colBias;
+      // STAY — keep current column (reduces jitter, feels more human)
+      targetX = prevX;
     }
 
-    // ML home bias — but less aggressive than before
-    if (Math.random() < mlBias.homeStrength * 0.3 && targetX !== home.x) {
-      targetX = prevX + (home.x > prevX ? 1 : home.x < prevX ? -1 : 0);
+    // Gentle home gravity in calm sections only
+    if ((section.type === SEC.VERSE || section.type === SEC.BREAK) && Math.random() < 0.15) {
+      if (prevX !== home.x) targetX = prevX + (home.x > prevX ? 1 : -1);
     }
 
-    // Clamp
+    // Clamp to territory
     targetX = Math.max(terr.minX, Math.min(terr.maxX, targetX));
     targetY = Math.max(0, Math.min(2, targetY));
     if (Math.abs(targetX - prevX) > 1) targetX = prevX + (targetX > prevX ? 1 : -1);
@@ -1866,6 +1856,9 @@
     const gaps = diffGaps[diffName] || diffGaps.Hard;
     const probs = diffProbs[diffName] || diffProbs.Hard;
 
+    // GROOVE LOCK state
+    let groovePattern = null, grooveBeatsLeft = 0, grooveSection = null, grooveEnergy = 0;
+
     while (beat < totalBeats - 1) {
       const t = useVBPM ? beatToTimeVBPM(beat) : beatToTime(beat, bpm);
       if (t >= state.audioDuration) break;
@@ -1880,6 +1873,13 @@
       // Skip truly silent beats
       if (energy < 0.08) { beat += gridStep; continue; }
 
+      // END-OF-SONG TAPER — reduce note density in last 10% of song
+      const songProgress = beat / totalBeats;
+      let endTaper = 1.0;
+      if (songProgress > 0.9) {
+        endTaper = Math.max(0.1, 1.0 - (songProgress - 0.9) * 8); // Ramps from 1.0 to 0.2
+      }
+
       // Breathing room
       const minGap = (section.type === SEC.DROP || section.type === SEC.CHORUS) ? gaps.drop :
                      (section.type === SEC.VERSE || section.type === SEC.BUILDUP) ? gaps.verse : gaps.quiet;
@@ -1888,35 +1888,65 @@
       // MUSIC-REACTIVE: Check if there's an actual onset near this beat
       const hasOnset = state.onsets.some(o => Math.abs(o - t) < 0.08);
 
-      // Probability gated by onset presence — much more likely to place on real beats
+      // Probability gated by onset + end taper
       const baseProb = (section.type === SEC.BREAK || section.type === SEC.INTRO || section.type === SEC.OUTRO) ? probs.quiet :
                    (section.type === SEC.VERSE) ? probs.verse : probs.drop;
-      const prob = hasOnset ? Math.min(1, baseProb + 0.3) : baseProb * 0.5;
+      const prob = (hasOnset ? Math.min(1, baseProb + 0.3) : baseProb * 0.5) * endTaper;
       if (Math.random() > prob) { beat += gridStep; continue; }
 
-      // SPECTRAL-MATCHED PATTERN SELECTION
-      // Bass hits → emphasis patterns (doubles, towers, dsd)
-      // Mid hits → standard alternating patterns
-      // High hits → fast short patterns (half-beat alternating)
+      // SPECTRAL-MATCHED PATTERN SELECTION WITH GROOVE LOCK
+      // Groove = stick with a pattern type for several beats (like a real mapper)
       const bpmFactor = localBPM > 170 ? 0.8 : localBPM > 140 ? 0.9 : 1.0;
       let patName;
 
-      if (bass > 0.65 && energy > 0.5) {
-        // BASS HIT — use emphasis patterns
-        const emphasisPool = diffName === "Easy" || diffName === "Normal"
-          ? ["double", "altRL", "altLR"]
-          : ["double", "dsd", "followDouble", "gallop4", "altDouble4", "window"];
-        patName = pickRandom(emphasisPool);
-      } else if (high > 0.5 && mid < 0.4 && energy > 0.3) {
-        // HIGH FREQUENCY (hihat/cymbal) — fast light patterns
-        const hiPool = diffName === "Easy" || diffName === "Normal"
-          ? ["singleR", "singleB", "altRL"]
-          : ["halfAltRL", "halfAltLR", "tripleAlt", "kickHatSnare"];
-        patName = pickRandom(hiPool);
+      // Break groove on section change or big energy shift
+      if (section.type !== grooveSection || Math.abs(energy - grooveEnergy) > 0.3) {
+        grooveBeatsLeft = 0;
+      }
+
+      if (grooveBeatsLeft > 0 && groovePattern && PAT[groovePattern]) {
+        // GROOVE LOCKED — reuse pattern with occasional variation
+        patName = groovePattern;
+        grooveBeatsLeft--;
+
+        // 25% chance to swap to a related pattern within same tier
+        if (Math.random() < 0.25) {
+          const variants = {
+            altRL: ["altLR", "halfAltRL"], altLR: ["altRL", "halfAltLR"],
+            halfAltRL: ["halfAltLR"], halfAltLR: ["halfAltRL"],
+            singleR: ["singleB"], singleB: ["singleR"],
+            double: ["window", "followDouble"], window: ["double"],
+            stream4: ["altDouble4", "gallop4"], gallop4: ["stream4"],
+            dsd: ["sds"], sds: ["dsd"],
+            tripleAlt: ["kickHatSnare"], kickHatSnare: ["tripleAlt"],
+          };
+          const alts = variants[patName];
+          if (alts) patName = alts[Math.floor(Math.random() * alts.length)];
+        }
       } else {
-        // GENERAL — use standard pool based on section + energy
-        const pool = getPatPool(diffName, section.type, energy * bpmFactor, settings.style);
-        patName = pickRandom(pool);
+        // PICK NEW GROOVE
+        if (bass > 0.65 && energy > 0.5) {
+          const emphasisPool = diffName === "Easy" || diffName === "Normal"
+            ? ["double", "altRL", "altLR"]
+            : ["double", "dsd", "followDouble", "gallop4", "altDouble4", "window"];
+          patName = pickRandom(emphasisPool);
+        } else if (high > 0.5 && mid < 0.4 && energy > 0.3) {
+          const hiPool = diffName === "Easy" || diffName === "Normal"
+            ? ["singleR", "singleB", "altRL"]
+            : ["halfAltRL", "halfAltLR", "tripleAlt", "kickHatSnare"];
+          patName = pickRandom(hiPool);
+        } else {
+          const pool = getPatPool(diffName, section.type, energy * bpmFactor, settings.style);
+          patName = pickRandom(pool);
+        }
+
+        // Lock groove: 4-8 beats in calm, 3-5 in drops
+        grooveBeatsLeft = (section.type === SEC.VERSE || section.type === SEC.BREAK)
+          ? 5 + Math.floor(Math.random() * 4)
+          : 3 + Math.floor(Math.random() * 3);
+        groovePattern = patName;
+        grooveSection = section.type;
+        grooveEnergy = energy;
       }
 
       const pattern = PAT[patName];
@@ -1934,12 +1964,18 @@
           placeGridNote(placed, nb, C.RED, hs, section, energy);
           placeGridNote(placed, nb, C.BLUE, hs, section, energy);
         } else if (step.hand === -2) {
+          // WINDOW — use current hand positions, not always 1,2
+          const redPos = getFlowPosition(C.RED, hs[C.RED].parity === "fore" ? D.DOWN : D.UP, hs, section, energy);
+          const bluePos = getFlowPosition(C.BLUE, hs[C.BLUE].parity === "fore" ? D.DOWN : D.UP, hs, section, energy);
           const dir = hs[C.RED].parity === "fore" ? D.DOWN : D.UP;
-          const row = IS_DOWN.includes(dir) ? 1 : 0;  // Middle or bottom, never top
-          placed.push({ b: nb, x: 1, y: row, c: C.RED, d: dir, a: 0 });
-          placed.push({ b: nb, x: 2, y: row, c: C.BLUE, d: dir, a: 0 });
-          flipParity(hs, C.RED, dir, nb, 1, row);
-          flipParity(hs, C.BLUE, dir, nb, 2, row);
+          // Ensure they're not on the same column
+          let rx = redPos.x, bx = bluePos.x;
+          if (rx === bx) { rx = Math.max(0, bx - 1); }
+          if (rx > bx) { const tmp = rx; rx = bx; bx = tmp; } // Red always left of blue
+          placed.push({ b: nb, x: rx, y: redPos.y, c: C.RED, d: dir, a: 0 });
+          placed.push({ b: nb, x: bx, y: bluePos.y, c: C.BLUE, d: dir, a: 0 });
+          flipParity(hs, C.RED, dir, nb, rx, redPos.y);
+          flipParity(hs, C.BLUE, dir, nb, bx, bluePos.y);
         } else {
           placeGridNote(placed, nb, step.hand, hs, section, energy);
         }
