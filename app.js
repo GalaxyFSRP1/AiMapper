@@ -896,6 +896,8 @@
     // BPM detection — multi-method voting
     if (!$("#cfg-bpm").value) {
       state.bpm = detectBPM(state.onsets, state.audioDuration);
+      // Safety clamp — NEVER allow BPM outside 60-200
+      state.bpm = Math.max(60, Math.min(200, state.bpm || 120));
       $("#cfg-bpm").value = state.bpm;
       // Log detection info
       const eBPM = detectBPMFromEnergy();
@@ -911,7 +913,7 @@
         bpmInfoEl.textContent = methods.join(" · ") + " → " + state.bpm;
       }
     } else {
-      state.bpm = parseFloat($("#cfg-bpm").value);
+      state.bpm = Math.max(60, Math.min(200, parseFloat($("#cfg-bpm").value) || 120));
     }
 
     // Variable BPM regions
@@ -1018,35 +1020,29 @@
   }
 
   function detectBPM(onsets, duration) {
-    // PRIMARY: Energy curve autocorrelation (most robust)
     const energyBPM = detectBPMFromEnergy();
-
-    // SECONDARY: Onset interval histogram (confirmation)
     const onsetBPM = detectBPMFromOnsets(onsets);
-
-    // TERTIARY: Bass-focused autocorrelation (for EDM/electronic)
     const bassBPM = detectBPMFromBass();
 
-    // Vote — if two methods agree (within ±3), use that
-    const candidates = [energyBPM, onsetBPM, bassBPM].filter(b => b > 0);
-    if (candidates.length === 0) return 120;
+    // HARD FILTER: only accept candidates in 60-200 range
+    const candidates = [energyBPM, onsetBPM, bassBPM].filter(b => b >= 60 && b <= 200);
+    if (candidates.length === 0) return 120; // Safe default
 
     // Find agreement
     for (let i = 0; i < candidates.length; i++) {
       for (let j = i + 1; j < candidates.length; j++) {
         if (Math.abs(candidates[i] - candidates[j]) <= 3) {
-          return Math.round((candidates[i] + candidates[j]) / 2);
+          return Math.max(60, Math.min(200, Math.round((candidates[i] + candidates[j]) / 2)));
         }
-        // Check half/double time agreement
-        if (Math.abs(candidates[i] - candidates[j] * 2) <= 4) return candidates[i];
-        if (Math.abs(candidates[i] * 2 - candidates[j]) <= 4) return candidates[j];
+        if (Math.abs(candidates[i] - candidates[j] * 2) <= 4) return Math.max(60, Math.min(200, candidates[i]));
+        if (Math.abs(candidates[i] * 2 - candidates[j]) <= 4) return Math.max(60, Math.min(200, candidates[j]));
       }
     }
 
-    // No agreement — prefer BPM in the common 90-160 range
+    // No agreement — prefer BPM in 90-160 range
     const ranked = candidates.map(b => ({ b, score: (b >= 90 && b <= 160) ? 2 : (b >= 70 && b <= 180) ? 1 : 0 }));
     ranked.sort((a, b) => b.score - a.score);
-    return ranked[0].b;
+    return Math.max(60, Math.min(200, ranked[0].b));
   }
 
   // Energy curve autocorrelation — THE most reliable BPM method
@@ -1604,7 +1600,7 @@
   function generateDifficulty(diffName) {
     const us = getUserSettings();
     const settings = getDiffSettings(diffName, state.bpm, us.style, us.complexity, us.density);
-    const bpm = state.bpm;
+    const bpm = Math.max(60, Math.min(200, state.bpm || 120));
     const duration = state.audioDuration;
     const totalBeats = timeToBeat(duration, bpm);
 
@@ -3319,14 +3315,21 @@
   }
 
   function buildInfoDat(diffs) {
-    const sorted = [...diffs].sort((a, b) => diffRank(a.name) - diffRank(b.name));
+    // Deduplicate by name and sort by rank
+    const seen = new Set();
+    const unique = diffs.filter(d => {
+      if (seen.has(d.name)) return false;
+      seen.add(d.name);
+      return true;
+    });
+    const sorted = [...unique].sort((a, b) => diffRank(a.name) - diffRank(b.name));
     return {
       _version: "2.1.0",
       _songName: $("#cfg-song-name").value || "Unknown Song",
       _songSubName: "",
       _songAuthorName: $("#cfg-song-author").value || "Unknown Artist",
       _levelAuthorName: $("#cfg-map-author").value || "BeatForge AI",
-      _beatsPerMinute: state.bpm, _shuffle: 0, _shufflePeriod: 0.5,
+      _beatsPerMinute: Math.max(60, Math.min(200, state.bpm || 120)), _shuffle: 0, _shufflePeriod: 0.5,
       _previewStartTime: 12, _previewDuration: 10,
       _songFilename: "song.ogg", _coverImageFilename: getCoverFilename(),
       _environmentName: $("#cfg-environment").value,
@@ -3369,6 +3372,7 @@
       burstSliders: chains.map(c => ({ b: rb(c.b), c: c.c, x: c.x, y: c.y, d: c.d, tb: rb(c.tb), tx: c.tx, ty: c.ty, sc: c.sc, s: c.s })),
       basicBeatmapEvents: lighting.map(ev => ({ b: rb(ev.b), et: ev.et, i: ev.i, f: parseFloat(ev.f.toFixed(3)) })),
       colorBoostBeatmapEvents: [],
+      waypoints: [],
       lightColorEventBoxGroups: [], lightRotationEventBoxGroups: [],
       lightTranslationEventBoxGroups: [], vfxEventBoxGroups: [],
       _fxEventsCollection: { _fl: [], _il: [] },
@@ -3382,36 +3386,32 @@
   function buildBPMInfoDat() {
     const sr = state.audioBuffer.sampleRate;
     const sc = Math.floor(sr * state.audioDuration);
+    const safeBPM = Math.max(60, Math.min(200, state.bpm || 120));
+    const expectedEB = (state.audioDuration * safeBPM) / 60;
 
-    // Build bpmData array from detected BPM regions
+    // Build bpmData from regions
     const bpmData = [];
     let runningBeat = 0;
 
-    for (const region of state.bpmRegions) {
-      const si = Math.floor(region.startTime * sr);
-      const ei = Math.min(Math.floor(region.endTime * sr), sc);
-      const regionDuration = region.endTime - region.startTime;
-      const regionBeats = (regionDuration * region.bpm) / 60;
-      const sb = runningBeat;
-      const eb = runningBeat + regionBeats;
-
-      bpmData.push({ si, ei, sb: rb(sb), eb: rb(eb) });
-      runningBeat = eb;
+    if (state.bpmRegions.length > 1) {
+      for (const region of state.bpmRegions) {
+        const rBPM = Math.max(60, Math.min(200, region.bpm || safeBPM));
+        const si = Math.floor(region.startTime * sr);
+        const ei = Math.min(Math.floor(region.endTime * sr), sc);
+        const regionDuration = Math.max(0, region.endTime - region.startTime);
+        const regionBeats = (regionDuration * rBPM) / 60;
+        bpmData.push({ si, ei, sb: rb(runningBeat), eb: rb(runningBeat + regionBeats) });
+        runningBeat += regionBeats;
+      }
     }
 
-    // Fallback: if no regions, use single region
-    if (bpmData.length === 0) {
-      bpmData.push({ si: 0, ei: sc, sb: 0, eb: rb(timeToBeat(state.audioDuration, state.bpm)) });
+    // Sanity: if regions produced bad total beats, use simple single-region
+    if (bpmData.length === 0 || runningBeat < 4 || runningBeat > expectedEB * 3) {
+      bpmData.length = 0;
+      bpmData.push({ si: 0, ei: sc, sb: 0, eb: rb(expectedEB) });
     }
 
-    return {
-      version: "4.0.0",
-      songChecksum: "",
-      songSampleCount: sc,
-      songFrequency: sr,
-      bpmData,
-      lufsData: [],
-    };
+    return { version: "4.0.0", songChecksum: "", songSampleCount: sc, songFrequency: sr, bpmData, lufsData: [] };
   }
 
   // ============================================================
@@ -3425,7 +3425,11 @@
       zip.file("BPMInfo.dat", JSON.stringify(gm.bpmInfo, null, 2));
       for (const d of gm.difficulties) zip.file(diffFilename(d.name), JSON.stringify(d.dat, null, 2));
 
-      // Audio — always named song.ogg in the zip (Beat Saber expects this)
+      // Audio — check if it's actually OGG
+      const audioExt = state.audioFile.name.split(".").pop().toLowerCase();
+      if (audioExt !== "ogg") {
+        alert("WARNING: Your audio file is ." + audioExt + ", not .ogg.\n\nBeat Saber requires OGG Vorbis format.\n\nThe file will be included as-is, but you may need to convert it to .ogg using Audacity or another tool before uploading to BeatSaver.");
+      }
       zip.file("song.ogg", await state.audioFile.arrayBuffer());
 
       // Cover — use pre-converted JPEG blob if available, otherwise generate placeholder
