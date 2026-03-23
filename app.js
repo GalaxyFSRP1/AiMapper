@@ -2700,7 +2700,7 @@
     const events = [];
     const spb = 60 / bpm;
     const us = getUserSettings();
-    const intensity = us.lightIntensity / 100; // 0-1
+    const intensity = Math.max(0.5, us.lightIntensity / 100); // Floor at 50% — never invisible
     const ET = { BACK: 0, RING: 1, LEFT: 2, RIGHT: 3, CENTER: 4, BOOST: 5, RSPIN: 8, RZOOM: 9, LSPD: 12, RSPD: 13 };
     const V = { OFF: 0, B_ON: 1, B_FL: 2, B_FD: 3, R_ON: 5, R_FL: 6, R_FD: 7, W_ON: 9, W_FL: 10, W_FD: 11 };
     let colorScheme = "blue";
@@ -2709,7 +2709,9 @@
     let patternSeed = Math.floor(Math.random() * 4);
 
     function ev(beat, et, val, f) {
-      events.push({ b: beat, et, i: val, f: Math.min(1, f * intensity) });
+      const rawF = f * intensity;
+      const finalF = val === 0 ? 0 : Math.max(0.15, Math.min(1, rawF)); // OFF=0, else min 0.15
+      events.push({ b: beat, et, i: val, f: finalF });
     }
 
     for (let beat = 0; beat < totalBeats; beat += 0.25) {
@@ -2939,6 +2941,35 @@
         }
       }
 
+      // INTRO: Gentle ambient build — lights slowly warm up
+      if (sec.type === SEC.INTRO) {
+        const introProgress = (t - sec.startTime) / Math.max(1, sec.endTime - sec.startTime);
+        if (isDown) {
+          ev(beat, ET.BACK, V.B_ON, 0.15 + introProgress * 0.3);
+          ev(beat, ET.CENTER, V.B_FD, 0.1 + introProgress * 0.2);
+        }
+        if (isWhole && introProgress > 0.3) {
+          ev(beat, ET.RING, V.B_ON, introProgress * 0.25);
+        }
+        if (isWhole && introProgress > 0.6 && mid > 0.2) {
+          const side = bar % 2 === 0 ? ET.LEFT : ET.RIGHT;
+          ev(beat, side, V.B_FD, introProgress * 0.2);
+        }
+      }
+
+      // OUTRO: Graceful dimming with color warmth
+      if (sec.type === SEC.OUTRO) {
+        const outroProgress = (t - sec.startTime) / Math.max(1, sec.endTime - sec.startTime);
+        const dimFactor = Math.max(0, 1 - outroProgress);
+        if (isDown) {
+          ev(beat, ET.BACK, V.B_FD, dimFactor * 0.3);
+          ev(beat, ET.CENTER, V.B_FD, dimFactor * 0.2);
+        }
+        if (isWhole && dimFactor > 0.3) {
+          ev(beat, ET.RING, V.B_FD, dimFactor * 0.15);
+        }
+      }
+
       // L7: Phrase boundary → color shift + bloom
       if (isPhr) {
         colorScheme = colorScheme === "blue" ? "red" : "blue";
@@ -2948,17 +2979,35 @@
         patternSeed = (patternSeed + 1) % 4; // Switch pattern at phrase boundaries too
       }
 
-      // L8: Section transition fades
+      // L8: Section transition fades + BOOST COLOR SWAPS
       for (const s of state.sections) {
         if (Math.abs(t - s.startTime) < spb * 0.25 && isWhole) {
           if (s.type === SEC.BREAK || s.type === SEC.OUTRO) {
             [ET.BACK, ET.CENTER, ET.LEFT, ET.RIGHT].forEach(et => ev(beat, et, V.B_FD, 0.1));
+            events.push({ b: beat, et: ET.BOOST, i: 0, f: 1 }); // Default colors for calm
           }
           if (s.type === SEC.DROP) {
-            // Blackout → explosion
+            // Blackout → explosion + activate boost colors
             [ET.BACK, ET.CENTER].forEach(et => { events.push({ b: Math.max(0, beat - 0.25), et, i: V.OFF, f: 0 }); ev(beat, et, V.R_FL, 1); });
             [ET.LEFT, ET.RIGHT, ET.RING].forEach(et => ev(beat, et, V.R_FL, 1));
             ev(beat, ET.RZOOM, V.R_ON, 1);
+            events.push({ b: beat, et: ET.BOOST, i: 1, f: 1 }); // Boost colors for drops
+          }
+          if (s.type === SEC.CHORUS) {
+            // Activate boost for chorus too
+            events.push({ b: beat, et: ET.BOOST, i: 1, f: 1 });
+            [ET.LEFT, ET.RIGHT, ET.CENTER].forEach(et => ev(beat, et, V.B_FL, 1));
+          }
+          if (s.type === SEC.VERSE) {
+            // Back to default colors
+            events.push({ b: beat, et: ET.BOOST, i: 0, f: 1 });
+          }
+          if (s.type === SEC.BUILDUP) {
+            // Boost activates halfway through buildup
+            const buildMid = s.startTime + (s.endTime - s.startTime) * 0.5;
+            if (Math.abs(t - buildMid) < spb * 0.5) {
+              events.push({ b: beat, et: ET.BOOST, i: 1, f: 1 });
+            }
           }
         }
       }
@@ -3016,9 +3065,27 @@
     });
 
     const filtered = events.filter(ev => ev.b >= 0);
-    while (filtered.length < MIN_LIGHTING_EVENTS) {
-      filtered.push({ b: Math.random() * totalBeats, et: Math.floor(Math.random() * 5), i: 3, f: 0.3 * intensity });
+
+    // Ensure there's always a startup event at beat 0 so lights aren't dark from the start
+    if (!filtered.some(e => e.b < 0.5 && e.et === ET.BACK)) {
+      filtered.push({ b: 0, et: ET.BACK, i: V.B_ON, f: 0.3 });
+      filtered.push({ b: 0, et: ET.CENTER, i: V.B_ON, f: 0.2 });
+      filtered.push({ b: 0, et: ET.RING, i: V.B_ON, f: 0.2 });
+      filtered.push({ b: 0, et: ET.LSPD, i: 1, f: 1 });
+      filtered.push({ b: 0, et: ET.RSPD, i: 1, f: 1 });
     }
+
+    // If below minimum, add structured events on whole beats (not random)
+    if (filtered.length < MIN_LIGHTING_EVENTS) {
+      for (let fb = 0; fb < totalBeats && filtered.length < MIN_LIGHTING_EVENTS; fb += 1) {
+        const fe = getEnergyAtTime(beatToTime(fb, bpm));
+        if (fe > 0.1) {
+          filtered.push({ b: fb, et: ET.BACK, i: V.B_ON, f: Math.max(0.2, fe * 0.5) });
+          filtered.push({ b: fb, et: ET.CENTER, i: fe > 0.5 ? V.B_FL : V.B_FD, f: Math.max(0.15, fe * 0.4) });
+        }
+      }
+    }
+
     filtered.sort((a, b) => a.b - b.b);
     return filtered;
   }
@@ -3366,7 +3433,19 @@
       return true;
     });
     const sorted = [...unique].sort((a, b) => diffRank(a.name) - diffRank(b.name));
-    return {
+    const envName = ($("#cfg-environment") || {}).value || "DefaultEnvironment";
+
+    // V3 environments that require environmentVersion: 3
+    const V3_ENVS = [
+      "WeaveEnvironment", "PyroEnvironment", "EDMEnvironment", "TheSecondEnvironment",
+      "LizzoEnvironment", "TheWeekndEnvironment", "RockMixtapeEnvironment",
+      "Dragons2Environment", "Panic2Environment", "QueenEnvironment",
+      "LinkinPark2Environment", "TheRollingStonesEnvironment", "LatticeEnvironment",
+      "DaftPunkEnvironment", "HipHopEnvironment", "ColliderEnvironment", "BritneyEnvironment",
+    ];
+    const isV3Env = V3_ENVS.includes(envName);
+
+    const info = {
       _version: "2.1.0",
       _songName: $("#cfg-song-name").value || "Unknown Song",
       _songSubName: "",
@@ -3375,12 +3454,26 @@
       _beatsPerMinute: Math.max(60, Math.min(200, state.bpm || 120)), _shuffle: 0, _shufflePeriod: 0.5,
       _previewStartTime: 12, _previewDuration: 10,
       _songFilename: "song.ogg", _coverImageFilename: getCoverFilename(),
-      _environmentName: $("#cfg-environment").value,
+      _environmentName: envName,
       _allDirectionsEnvironmentName: "GlassDesertEnvironment",
       _songTimeOffset: 0,
       _customData: { _editors: { BeatForge: { version: "2.0.0" } } },
-      _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: sorted.map(d => ({ _difficulty: d.name, _difficultyRank: diffRank(d.name), _beatmapFilename: diffFilename(d.name), _noteJumpMovementSpeed: d.data.settings.njs, _noteJumpStartBeatOffset: 0 })) }],
+      _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: sorted.map(d => ({
+        _difficulty: d.name === "ExpertPlus" ? "ExpertPlus" : d.name,
+        _difficultyRank: diffRank(d.name),
+        _beatmapFilename: diffFilename(d.name),
+        _noteJumpMovementSpeed: d.data.settings.njs,
+        _noteJumpStartBeatOffset: 0,
+        _customData: {},
+      })) }],
     };
+
+    // Add environment version for v3 envs
+    if (isV3Env) {
+      info._environmentVersion = 3;
+    }
+
+    return info;
   }
 
   function diffFilename(n) { return n + "Standard.dat"; }
@@ -3413,14 +3506,16 @@
       obstacles: walls.map(w => ({ b: rb(w.b), x: w.x, y: w.y, d: rb(w.d), w: w.w, h: w.h })),
       sliders: arcs.map(a => ({ b: rb(a.b), c: a.c, x: a.x, y: a.y, d: a.d, mu: a.mu, tb: rb(a.tb), tx: a.tx, ty: a.ty, tc: a.tc, tmu: a.tmu, m: a.m })),
       burstSliders: chains.map(c => ({ b: rb(c.b), c: c.c, x: c.x, y: c.y, d: c.d, tb: rb(c.tb), tx: c.tx, ty: c.ty, sc: c.sc, s: c.s })),
-      basicBeatmapEvents: lighting.map(ev => ({ b: rb(ev.b), et: ev.et, i: ev.i, f: parseFloat(ev.f.toFixed(3)) })),
-      colorBoostBeatmapEvents: [],
+      // Filter out boost events (et=5) from basicBeatmapEvents — they go in colorBoostBeatmapEvents
+      basicBeatmapEvents: lighting.filter(ev => ev.et !== 5).map(ev => ({ b: rb(ev.b), et: ev.et, i: ev.i, f: Math.max(0, parseFloat(ev.f.toFixed(3))) })),
+      // v3 color boost events: {b, o} where o=true activates boost colors
+      colorBoostBeatmapEvents: lighting.filter(ev => ev.et === 5).map(ev => ({ b: rb(ev.b), o: ev.i === 1 })),
       waypoints: [],
       lightColorEventBoxGroups: [], lightRotationEventBoxGroups: [],
       lightTranslationEventBoxGroups: [], vfxEventBoxGroups: [],
       _fxEventsCollection: { _fl: [], _il: [] },
       basicEventTypesWithKeywords: { d: [] },
-      useNormalEventsAsCompatibleEvents: false,
+      useNormalEventsAsCompatibleEvents: true,
     };
   }
 
