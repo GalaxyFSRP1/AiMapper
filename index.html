@@ -10,6 +10,47 @@
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+  <!-- LOADING SCREEN -->
+  <div id="loading-screen" style="position:fixed;inset:0;z-index:9999;background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.6s;">
+    <div style="text-align:center;">
+      <svg viewBox="0 0 48 48" fill="none" width="80" height="80" style="animation:loadSpin 2s linear infinite;">
+        <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="#00e5ff" stroke-width="2" fill="none"/>
+        <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="#00e5ff" opacity="0.3"/>
+        <circle cx="24" cy="24" r="4" fill="#ff1744"/>
+      </svg>
+      <h1 style="font-family:'Orbitron',monospace;font-size:2.2rem;color:#00e5ff;margin:20px 0 8px;letter-spacing:8px;">BEATFORGE</h1>
+      <p style="font-family:'Rajdhani',sans-serif;color:#556;font-size:0.9rem;letter-spacing:3px;">AI AUTO-MAPPER</p>
+      <div id="load-countdown" style="font-family:'Orbitron',monospace;font-size:3rem;color:#ff1744;margin-top:30px;font-weight:900;">5</div>
+      <div id="load-bar" style="width:200px;height:3px;background:#1a1a2e;border-radius:2px;margin:16px auto 0;overflow:hidden;">
+        <div id="load-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#ff1744,#00e5ff);transition:width 1s linear;"></div>
+      </div>
+      <p style="font-family:'Rajdhani',sans-serif;color:#334;font-size:0.7rem;margin-top:12px;">Loading systems...</p>
+    </div>
+  </div>
+  <style>
+    @keyframes loadSpin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+  </style>
+  <script>
+    (function(){
+      const start = Date.now();
+      const cd = document.getElementById('load-countdown');
+      const fill = document.getElementById('load-bar-fill');
+      const screen = document.getElementById('loading-screen');
+      let count = 5;
+      fill.style.width = '0%';
+      const iv = setInterval(function(){
+        count--;
+        if(cd) cd.textContent = count;
+        if(fill) fill.style.width = ((5-count)/5*100)+'%';
+        if(count <= 0){
+          clearInterval(iv);
+          screen.style.opacity = '0';
+          setTimeout(function(){ screen.style.display='none'; }, 600);
+        }
+      }, 1000);
+    })();
+  </script>
+
   <canvas id="bg-canvas"></canvas>
 
   <div class="app-container">

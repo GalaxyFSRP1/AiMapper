@@ -28,6 +28,7 @@
     sections: [],
     generatedMap: null,
     rankScores: null,
+    genSeed: 0, // Increments each generation for variety
     // Audio playback
     audioCtx: null,
     audioSource: null,
@@ -255,16 +256,30 @@
   };
 
   // Row selection — mostly y=0 and y=1, y=2 only for emphasis
-  function getTargetRow(dir, energy, section) {
-    // High energy emphasis moments → allow top row
-    if (energy > 0.8 && (section.type === SEC.DROP || section.type === SEC.CHORUS)) {
-      if (IS_DOWN.includes(dir)) return 2; // Top row down-swing for big hits
+  // Row placement — balanced across 3 rows with top for emphasis
+  // Target: ~45% bottom, ~40% middle, ~15% top
+  function getTargetRow(dir, energy, section, swingCount) {
+    const swing = swingCount || 0;
+
+    // DROP/CHORUS: use all 3 rows based on energy
+    if (section.type === SEC.DROP || section.type === SEC.CHORUS) {
+      if (energy > 0.7 && IS_DOWN.includes(dir) && swing % 5 === 0) return 2; // Top row every 5th swing on strong beats
+      if (IS_DOWN.includes(dir)) return swing % 3 === 0 ? 1 : 0; // Alternate mid/bottom for down
+      if (IS_UP.includes(dir)) return 0;
+      return 1;
+    }
+
+    // BUILDUP: gradually introduce top row
+    if (section.type === SEC.BUILDUP) {
+      if (energy > 0.65 && IS_DOWN.includes(dir) && swing % 6 === 0) return 2;
+      if (IS_DOWN.includes(dir)) return 1;
       return 0;
     }
-    // Standard mapping: bottom and middle rows
-    if (IS_DOWN.includes(dir)) return 1; // Middle row — comfortable down swing
-    if (IS_UP.includes(dir)) return 0;   // Bottom row — natural up swing
-    return 1; // Horizontal → middle
+
+    // VERSE/INTRO/BREAK: mostly bottom two rows, rare middle
+    if (IS_DOWN.includes(dir)) return swing % 4 === 0 ? 1 : 0; // Mostly bottom, some middle
+    if (IS_UP.includes(dir)) return 0;
+    return 1;
   }
 
   function getDirColumnBias(dir, hand) {
@@ -278,7 +293,7 @@
     const state_h = hs[hand];
     const terr = TERRITORY[hand];
     const home = HOME[hand];
-    const idealY = getTargetRow(dir, energy, section);
+    const idealY = getTargetRow(dir, energy, section, state_h.swingCount);
     const colBias = getDirColumnBias(dir, hand);
     const gap = state_h.lastBeat < -5 ? 99 : 0;
     const mlBias = getMLPositionBias();
@@ -1563,7 +1578,11 @@
   function timeToBeat(time, bpm) { return (time * bpm) / 60; }
   function quantizeToBeat(time, bpm, sub) { return Math.round(time * (bpm / 60) * sub) / sub; }
   function getSelectedDifficulties() { const d = []; $$(".diff-chips input:checked").forEach(el => d.push(el.value)); return d; }
-  function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function pickRandom(arr) {
+    // Use generation seed to shift the random selection
+    const idx = Math.floor(Math.random() * arr.length);
+    return arr[(idx + state.genSeed) % arr.length];
+  }
   function pickWeighted(arr) {
     // First items are weighted higher (more comfortable)
     const weights = arr.map((_, i) => arr.length - i);
@@ -1644,6 +1663,29 @@
     const chains = wantChains ? generateChains(bestNotes, bpm, settings, totalBeats) : [];
     const bombs = wantBombs ? generateBombs(bestNotes, bpm, settings, totalBeats) : [];
     const walls = wantWalls ? generateWalls(bestNotes, bpm, settings, totalBeats) : [];
+
+    // POST-PASS: Fix notes that overlap with walls
+    if (walls.length > 0) {
+      for (const n of bestNotes) {
+        for (const w of walls) {
+          // Check if note is inside wall's time span and column
+          if (n.b >= w.b - 0.25 && n.b <= w.b + w.d + 0.25) {
+            const wallRight = w.x + w.w - 1;
+            if (n.x >= w.x && n.x <= wallRight) {
+              // Note is behind wall — shift it away
+              if (n.c === C.RED) {
+                n.x = Math.max(0, w.x - 1);
+              } else {
+                n.x = Math.min(3, wallRight + 1);
+              }
+            }
+            // Also avoid adjacent column to wall (too close)
+            if (n.x === w.x - 1 && w.x > 0 && n.c === C.BLUE) continue; // OK
+            if (n.x === wallRight + 1 && wallRight < 3 && n.c === C.RED) continue; // OK
+          }
+        }
+      }
+    }
     const lighting = generateLighting(bpm, totalBeats);
     logGen(totalBeats, "pattern", "Lighting events: " + lighting.length);
     if (lighting.length < MIN_LIGHTING_EVENTS) throw new Error("Lighting Missing");
@@ -2382,18 +2424,52 @@
     }
   }
 
-  // ---- ARCS ----
+  // ---- ARCS (SLIDERS) ----
+  // Arcs connect consecutive same-color notes with a curved guide line.
+  // LIMITS: max 1 per 3 beats, capped total, only in sections with enough gap,
+  // head/tail must have compatible swing directions
   function generateArcs(notes, bpm, settings) {
     const arcs = [];
     if (settings.arcRate <= 0) return arcs;
+    const maxArcs = Math.max(4, Math.floor(notes.length / 12)); // ~1 arc per 12 notes
+    let lastArcBeat = -10;
+
     for (let color = 0; color <= 1; color++) {
       const hand = notes.filter(n => n.c === color);
       for (let i = 0; i < hand.length - 1; i++) {
-        const curr = hand[i], next = hand[i + 1], gap = next.b - curr.b;
-        if (gap < 0.5 || gap > 2.5 || Math.random() > settings.arcRate) continue;
-        const sec = getSectionAt(beatToTime(curr.b, bpm));
-        if ((sec.type === SEC.VERSE || sec.type === SEC.BREAK) && Math.random() > 0.3) continue;
-        arcs.push({ b: curr.b, c: color, x: curr.x, y: curr.y, d: curr.d, mu: 0.8 + Math.random() * 0.4, tb: next.b, tx: next.x, ty: next.y, tc: next.d, tmu: 0.3 + Math.random() * 0.4, m: 0, a: 0 });
+        if (arcs.length >= maxArcs) break;
+
+        const curr = hand[i], next = hand[i + 1];
+        const gap = next.b - curr.b;
+
+        // Gap must be 1-3 beats (too short = cluttered, too long = invisible)
+        if (gap < 1.0 || gap > 3.0) continue;
+
+        // Minimum 3 beats since last arc
+        if (curr.b - lastArcBeat < 3) continue;
+
+        // Probability check
+        if (Math.random() > settings.arcRate * 0.5) continue;
+
+        const t = beatToTime(curr.b, bpm);
+        const sec = getSectionAt(t);
+
+        // Prefer arcs in flowing sections (verse, chorus), less in drops
+        if (sec.type === SEC.DROP && Math.random() > 0.3) continue;
+        if (sec.type === SEC.BREAK || sec.type === SEC.INTRO) {
+          if (Math.random() > 0.5) continue; // Some arcs OK in calm sections for flow
+        }
+
+        // Arc curvature varies by section
+        const mu = sec.type === SEC.VERSE ? 0.5 : (0.6 + Math.random() * 0.5);
+        const tmu = 0.3 + Math.random() * 0.3;
+
+        arcs.push({
+          b: curr.b, c: color, x: curr.x, y: curr.y, d: curr.d,
+          mu: mu, tb: next.b, tx: next.x, ty: next.y, tc: next.d,
+          tmu: tmu, m: 0, a: 0,
+        });
+        lastArcBeat = curr.b;
       }
     }
     return arcs;
@@ -2851,51 +2927,54 @@
 
     // ================================================================
     // END-OF-SONG FADE-OUT
-    // Detect energy decay in the last portion of the song and
-    // progressively dim all lights to match the audio fade
+    // Smoothly dim all lights as song ends. Detect energy fade or
+    // always fade the last 4 beats.
     // ================================================================
-    const fadeStartBeat = totalBeats * 0.85; // Start checking at 85% of song
-    const lastBeats = totalBeats - fadeStartBeat;
-    if (lastBeats > 2) {
-      // Find where energy starts consistently dropping
-      let fadeDetectedBeat = totalBeats; // Default: no fade detected
-      let peakEnergy = 0;
-      for (let fb = fadeStartBeat; fb < totalBeats; fb += 0.5) {
-        const fe = getEnergyAtTime(beatToTime(fb, bpm));
-        if (fe > peakEnergy) peakEnergy = fe;
-        // Fade detected when energy drops below 40% of recent peak
-        if (peakEnergy > 0.2 && fe < peakEnergy * 0.4 && fadeDetectedBeat === totalBeats) {
-          fadeDetectedBeat = fb;
-        }
-      }
+    const fadeCheckStart = totalBeats * 0.8;
+    let fadeStartBeat = totalBeats; // Default: no fade
+    let peakLateEnergy = 0;
 
-      // Generate fade-out lighting from detected point to end
-      if (fadeDetectedBeat < totalBeats - 1) {
-        const fadeDuration = totalBeats - fadeDetectedBeat;
-        for (let fb = fadeDetectedBeat; fb < totalBeats; fb += 1) {
-          const fadeProgress = (fb - fadeDetectedBeat) / fadeDuration; // 0→1
-          const fadeIntensity = Math.max(0, (1 - fadeProgress) * intensity);
-
-          // Progressive dim on all light groups
-          [ET.BACK, ET.CENTER, ET.LEFT, ET.RIGHT, ET.RING].forEach(et => {
-            events.push({ b: fb, et, i: V.B_FD, f: fadeIntensity * 0.5 });
-          });
-
-          // Slow laser speeds down
-          const fadeSpeed = Math.max(0, Math.floor((1 - fadeProgress) * 3));
-          events.push({ b: fb, et: ET.LSPD, i: fadeSpeed, f: 1 });
-          events.push({ b: fb, et: ET.RSPD, i: fadeSpeed, f: 1 });
-        }
-
-        // Final blackout at the very end
-        const endBeat = totalBeats - 0.5;
-        [ET.BACK, ET.CENTER, ET.LEFT, ET.RIGHT, ET.RING].forEach(et => {
-          events.push({ b: endBeat, et, i: V.OFF, f: 0 });
-        });
-        events.push({ b: endBeat, et: ET.LSPD, i: 0, f: 1 });
-        events.push({ b: endBeat, et: ET.RSPD, i: 0, f: 1 });
+    // Scan for energy drop
+    for (let fb = fadeCheckStart; fb < totalBeats; fb += 0.5) {
+      const fe = getEnergyAtTime(beatToTime(fb, bpm));
+      if (fe > peakLateEnergy) peakLateEnergy = fe;
+      if (peakLateEnergy > 0.15 && fe < peakLateEnergy * 0.35 && fadeStartBeat === totalBeats) {
+        fadeStartBeat = fb;
       }
     }
+
+    // Always fade last 4 beats even if no energy drop detected
+    if (fadeStartBeat >= totalBeats - 1) {
+      fadeStartBeat = Math.max(2, totalBeats - 4);
+    }
+
+    // Remove any existing events in the fade zone that would conflict
+    const preFadeLen = events.length;
+    for (let ei = events.length - 1; ei >= 0; ei--) {
+      if (events[ei].b >= fadeStartBeat) events.splice(ei, 1);
+    }
+
+    // Generate smooth fade
+    const fadeDuration = Math.max(1, totalBeats - fadeStartBeat);
+    for (let fb = fadeStartBeat; fb < totalBeats; fb += 0.5) {
+      const fadeProgress = (fb - fadeStartBeat) / fadeDuration; // 0→1
+      const fadeI = Math.max(0, (1 - fadeProgress) * intensity);
+
+      // Dim all groups smoothly
+      [ET.BACK, ET.CENTER, ET.LEFT, ET.RIGHT, ET.RING].forEach(et => {
+        events.push({ b: rb(fb), et, i: fadeI > 0.1 ? V.B_FD : V.OFF, f: fadeI * 0.4 });
+      });
+
+      // Slow lasers
+      const spd = Math.max(0, Math.floor((1 - fadeProgress) * 2));
+      events.push({ b: rb(fb), et: ET.LSPD, i: spd, f: 1 });
+      events.push({ b: rb(fb), et: ET.RSPD, i: spd, f: 1 });
+    }
+
+    // Final blackout
+    [ET.BACK, ET.CENTER, ET.LEFT, ET.RIGHT, ET.RING].forEach(et => {
+      events.push({ b: rb(totalBeats - 0.25), et, i: V.OFF, f: 0 });
+    });
 
     const filtered = events.filter(ev => ev.b >= 0);
     while (filtered.length < MIN_LIGHTING_EVENTS) {
@@ -3421,6 +3500,7 @@
     const total = diffs.length + 2;
     let step = 0;
     try {
+      state.genSeed = (state.genSeed + 1) % 100; // New seed each generation
       if (!skipAnalysis) {
         step++; setProgress(step / total, "Analyzing audio..."); await sleep(40);
       }
