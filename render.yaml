@@ -1,0 +1,33 @@
+# One-click deploy on Render (free tier works: the generator is CPU-only).
+services:
+  - type: web
+    name: aimapper
+    runtime: node
+    plan: free
+    buildCommand: "node --version"
+    startCommand: "node app/backend/server.js"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MAPPER_DEFAULT_OWNER
+        value: GalaxyFSRP1
+      - key: MAPPER_DEFAULT_REPO
+        value: AiMapper
+      - key: MAPPER_DEFAULT_BASE_PATH
+        value: models
+      - key: MAPPER_TRUST_PROXY
+        value: "1"
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: MAPPER_ENCRYPTION_KEY
+        generateValue: true
+      - key: MAPPER_DATA_DIR
+        value: /var/data
+    disk:
+      name: aimapper-data
+      mountPath: /var/data
+      sizeGB: 1

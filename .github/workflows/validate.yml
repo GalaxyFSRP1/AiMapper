@@ -1,0 +1,144 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Test suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Node + python versions
+        run: |
+          node --version
+          python3 --version
+
+      - name: Generation pipeline suite
+        run: node tests/pipeline.test.js
+
+      - name: HTTP API suite
+        run: node tests/api.test.js
+
+      - name: GitHub publishing suite (mock API)
+        run: node tests/github.test.js
+
+      - name: Front-end suite (real server + real studio.js)
+        run: node tests/ui.test.js
+
+      - name: Publish-through-the-UI suite (mock GitHub)
+        run: node tests/publish-ui.test.js
+
+      - name: Build a reference artifact
+        run: node scripts/generate-artifact.js --out dist/model --params 5000000
+
+      - name: Upload generated model project
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-model-5m
+          path: |
+            dist/model
+            dist/mapper-5m.zip
+          retention-days: 14
+
+  architecture:
+    name: Generated model builds in PyTorch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PyTorch (CPU)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install safetensors numpy
+
+      - name: Generate a model and validate the bytes
+        run: node scripts/generate-artifact.js --out dist/model --params 5000000
+
+      - name: Load the generated checkpoint strictly and run a forward pass
+        working-directory: dist/model
+        run: |
+          python - <<'PY'
+          import json, torch
+          from model import ModelConfig, load_pretrained
+
+          model = load_pretrained()            # strict: every tensor must match
+          n = model.num_parameters()
+          expected = json.load(open("config.json"))["achieved_parameters"]
+          print(f"parameters: {n:,} (config says {expected:,})")
+          assert n == expected, "parameter count mismatch"
+
+          idx = torch.randint(0, model.cfg.vocab_size, (2, 16))
+          logits, loss = model(idx, idx)
+          print("logits", tuple(logits.shape), "loss", round(float(loss), 4))
+          assert torch.isfinite(loss)
+          print("::notice::generated model builds and runs in PyTorch")
+          PY
+
+      - name: Train a few steps
+        working-directory: dist/model
+        run: |
+          python data/prepare_data.py --synthetic 24 > /dev/null
+          python train.py --steps 12 --batch-size 4 | tail -5
+
+      - name: Benchmark
+        working-directory: dist/model
+        run: python benchmark.py --json --iters 3 | tee benchmark.json
+
+  frontend:
+    name: Studio front-end compiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax-check every browser script
+        run: |
+          for file in app/web/studio.js app.js ai_model.js; do
+            echo "checking $file"
+            node --check "$file"
+          done
+
+      - name: HTML sanity
+        run: |
+          for file in index.html app/web/model-studio.html; do
+            test -s "$file" || { echo "::error::$file missing"; exit 1; }
+            grep -qi "<!doctype html>" "$file" || { echo "::error::$file has no doctype"; exit 1; }
+          done
+          echo "::notice::front-end files present and parseable"

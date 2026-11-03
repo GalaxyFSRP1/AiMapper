@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Model Studio — AiMapper</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 48 48" width="34" height="34" aria-hidden="true">
+        <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="var(--cyan)" stroke-width="2" fill="none"/>
+        <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="var(--cyan)" opacity=".25"/>
+        <circle cx="24" cy="24" r="4" fill="var(--pink)"/>
+      </svg>
+      <span>
+        <b>AIMAPPER</b>
+        <small>MODEL STUDIO</small>
+      </span>
+    </a>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-panel="generator" role="tab">Model Generator</button>
+      <button class="tab" data-panel="architecture" role="tab">Architecture</button>
+      <button class="tab" data-panel="github" role="tab">GitHub</button>
+      <button class="tab" data-panel="training" role="tab">Training</button>
+      <button class="tab" data-panel="validation" role="tab">Validation</button>
+      <button class="tab" data-panel="logs" role="tab">Build Logs</button>
+      <button class="tab" data-panel="versions" role="tab">Versions</button>
+      <button class="tab" data-panel="monitoring" role="tab">Monitoring</button>
+    </nav>
+
+    <div class="account">
+      <span id="auth-chip" class="chip chip-muted">not connected</span>
+      <a class="btn btn-ghost" href="/">← BeatForge</a>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- ================= GENERATOR ================= -->
+    <section class="panel col-span-2" id="panel-generator">
+      <div class="panel-head">
+        <h2>Model Generator</h2>
+        <span class="panel-sub" id="gen-sub">~5,000,000 trainable parameters · real weights · automatic GitHub publish</span>
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>Model name</span>
+          <input id="in-name" type="text" value="mapper-5m" maxlength="64" autocomplete="off">
+          <small>Used for the folder name and repository ledger</small>
+        </label>
+
+        <label class="field">
+          <span>Target parameters</span>
+          <input id="in-target" type="number" value="5000000" min="100000" max="500000000" step="100000">
+          <small id="target-hint">5,000,000 — the architecture search lands within 0.05%</small>
+        </label>
+
+        <label class="field">
+          <span>Vocabulary cap</span>
+          <input id="in-vocab" type="number" value="2048" min="512" max="65536" step="256">
+          <small>Upper bound; the trained BPE vocabulary is the real size</small>
+        </label>
+
+        <label class="field">
+          <span>Dataset examples</span>
+          <input id="in-synthetic" type="number" value="64" min="8" max="500" step="8">
+          <small>Synthesised map specs added to the seed corpus</small>
+        </label>
+
+        <label class="field">
+          <span>Repository (owner/name)</span>
+          <input id="in-repo" type="text" placeholder="GalaxyFSRP1/AiMapper" autocomplete="off">
+          <small>Created if it does not exist</small>
+        </label>
+
+        <label class="field">
+          <span>Base path</span>
+          <input id="in-basepath" type="text" value="models" autocomplete="off">
+          <small>Generated project goes to <code>&lt;base&gt;/&lt;model-slug&gt;/</code></small>
+        </label>
+      </div>
+
+      <div class="switches">
+        <label class="switch"><input type="checkbox" id="in-publish" checked><span></span>Publish to GitHub</label>
+        <label class="switch"><input type="checkbox" id="in-private"><span></span>Create repository as private</label>
+        <label class="switch"><input type="checkbox" id="in-actions" checked><span></span>Dispatch GitHub Actions after push</label>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-generate">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4.09 12.97A1 1 0 004.86 14.5H11l-1 7.5 8.91-10.97A1 1 0 0018.14 9.5H12l1-7.5z"/></svg>
+          Generate AI Model
+        </button>
+        <button class="btn" id="btn-estimate">Preview architecture</button>
+        <button class="btn btn-ghost" id="btn-cancel" hidden>Cancel job</button>
+        <span class="hint" id="gen-hint"></span>
+      </div>
+
+      <div class="progress-block" id="progress-block" hidden>
+        <div class="progress-head">
+          <span id="progress-step">starting…</span>
+          <b id="progress-pct">0%</b>
+        </div>
+        <div class="bar"><i id="progress-fill" style="width:0%"></i></div>
+        <ol class="steps" id="steps"></ol>
+      </div>
+
+      <div id="result-block" hidden></div>
+    </section>
+
+    <!-- ================= PARAMETER COUNTER / ESTIMATE ================= -->
+    <section class="panel" id="panel-counter">
+      <div class="panel-head"><h2>Parameter Counter</h2><span class="panel-sub">exact, closed-form</span></div>
+      <div id="counter-body" class="counter">
+        <div class="counter-total"><b id="counter-value">—</b><span>trainable parameters</span></div>
+        <dl id="counter-grid"></dl>
+        <p class="hint">Computed from layer geometry: embeddings + positional + every block's attention and MLP + final norm.</p>
+      </div>
+    </section>
+
+    <!-- ================= ARCHITECTURE ================= -->
+    <section class="panel col-span-2" id="panel-architecture" hidden>
+      <div class="panel-head">
+        <h2>Model Architecture</h2>
+        <span class="panel-sub">synthesised configuration and the block stack it produces</span>
+      </div>
+      <div class="arch-top">
+        <div class="arch-grid" id="arch-grid"></div>
+        <div class="arch-figure"><canvas id="arch-canvas" width="720" height="420"></canvas></div>
+      </div>
+      <table class="table" id="arch-alternatives"></table>
+    </section>
+
+    <!-- ================= GITHUB ================= -->
+    <section class="panel" id="panel-github" hidden>
+      <div class="panel-head"><h2>GitHub Repository Manager</h2><span class="panel-sub">server-side OAuth — tokens never touch the browser</span></div>
+
+      <div id="connect-box">
+        <p class="hint">Connect an account to let Model Studio create repositories, commit generated projects and dispatch Actions.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-oauth">Connect with GitHub OAuth</button>
+          <button class="btn" id="btn-sandbox">Use sandbox session</button>
+        </div>
+        <details class="token-box">
+          <summary>Or paste a personal access token</summary>
+          <p class="hint">Fine-grained or classic token with <code>repo</code> + <code>workflow</code>. It is sealed with AES-256-GCM on the server; the browser never sees it again.</p>
+          <div class="actions">
+            <input id="in-token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">
+            <button class="btn" id="btn-token">Connect</button>
+          </div>
+        </details>
+      </div>
+
+      <div id="account-box" hidden>
+        <div class="account-row">
+          <img id="acct-avatar" alt="" width="44" height="44">
+          <div>
+            <b id="acct-login">—</b>
+            <small id="acct-method">—</small>
+          </div>
+          <button class="btn btn-ghost" id="btn-logout">Disconnect</button>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btn-repos">Load my repositories</button>
+          <button class="btn" id="btn-verify">Verify target repo</button>
+        </div>
+        <div id="repo-list" class="repo-list"></div>
+        <div id="verify-out" class="hint"></div>
+      </div>
+
+      <div class="gh-target">
+          <h3 class="mini">Publish target</h3>
+          <div class="gh-target-grid">
+            <div><dt>Repository</dt><dd id="gh-repo">—</dd></div>
+            <div><dt>Branch</dt><dd id="gh-branch">—</dd></div>
+            <div><dt>Directory</dt><dd id="gh-path">—</dd></div>
+            <div><dt>Last published</dt><dd id="gh-last">never from this browser</dd></div>
+          </div>
+          <p class="hint">Generated projects are pushed into the existing repository as one atomic commit under <code>&lt;directory&gt;/&lt;model-slug&gt;/</code>, plus a ledger update at <code>&lt;directory&gt;/README.md</code>. No new repository is created unless the name does not exist yet.</p>
+        </div>
+
+        <div class="gh-scopes">
+          <h3 class="mini">What the token can do</h3>
+          <ul class="checklist">
+            <li class="ok"><i>✓</i><div><b>repo</b><small>read/write contents, create repositories, read Actions runs</small></div></li>
+            <li class="ok"><i>✓</i><div><b>workflow</b><small>commit workflow files and dispatch <code>validate.yml</code> / <code>model-check.yml</code></small></div></li>
+            <li class="bad"><i>✕</i><div><b>never requested</b><small>admin, delete, billing, or any organisation-wide scope</small></div></li>
+          </ul>
+      </div>
+    </section>
+
+    <!-- ================= TRAINING CONFIG ================= -->
+    <section class="panel" id="panel-training" hidden>
+      <div class="panel-head"><h2>Training Configuration</h2><span class="panel-sub">written into config.json and used by train.py</span></div>
+      <div class="form-grid">
+        <label class="field"><span>Batch size</span><input id="t-batch" type="number" value="16" min="1" max="512"></label>
+        <label class="field"><span>Learning rate</span><input id="t-lr" type="number" value="0.0003" min="0.000001" max="1" step="0.00001"></label>
+        <label class="field"><span>Max steps</span><input id="t-steps" type="number" value="2000" min="1" max="200000" step="100"></label>
+        <label class="field"><span>Weight decay</span><input id="t-wd" type="number" value="0.1" min="0" max="1" step="0.01"></label>
+        <label class="field"><span>Grad clip</span><input id="t-clip" type="number" value="1" min="0" max="100" step="0.1"></label>
+        <label class="field"><span>Warmup ratio</span><input id="t-warm" type="number" value="0.03" min="0" max="0.5" step="0.01"></label>
+        <label class="field"><span>Optimizer</span>
+          <select id="t-opt"><option value="adamw">AdamW</option><option value="adam">Adam</option><option value="sgd">SGD</option></select>
+        </label>
+        <label class="field"><span>Scheduler</span>
+          <select id="t-sched"><option value="cosine">Cosine</option><option value="linear">Linear</option><option value="constant">Constant</option></select>
+        </label>
+      </div>
+      <pre class="code" id="training-preview"></pre>
+    </section>
+
+    <!-- ================= VALIDATION ================= -->
+    <section class="panel col-span-2" id="panel-validation" hidden>
+      <div class="panel-head">
+        <h2>Model Validation</h2>
+        <span class="panel-sub" id="val-sub">checks run against the generated bytes, not a report</span>
+      </div>
+      <div id="val-body"><p class="hint">Run a generation to validate a model.</p></div>
+    </section>
+
+    <!-- ================= LOGS ================= -->
+    <section class="panel col-span-2" id="panel-logs" hidden>
+      <div class="panel-head">
+        <h2>Build Logs</h2>
+        <div class="actions-inline">
+          <label class="switch"><input type="checkbox" id="log-follow" checked><span></span>Follow</label>
+          <button class="btn btn-ghost" id="btn-copy-log">Copy</button>
+        </div>
+      </div>
+      <pre class="log" id="log-body">no job running</pre>
+    </section>
+
+    <!-- ================= VERSIONS ================= -->
+    <section class="panel col-span-2" id="panel-versions" hidden>
+      <div class="panel-head"><h2>Version History</h2><span class="panel-sub">every generated model, its commit and workflow run</span></div>
+      <div id="versions-body"><p class="hint">No generations yet.</p></div>
+    </section>
+
+    <!-- ================= MONITORING ================= -->
+    <section class="panel col-span-2" id="panel-monitoring" hidden>
+      <div class="panel-head"><h2>Error Monitoring</h2><span class="panel-sub">server-side structured logs</span></div>
+      <div class="stat-row" id="mon-stats"></div>
+      <div id="mon-errors"></div>
+      <pre class="log small" id="mon-logs"></pre>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>AiMapper Model Studio <b id="ver">v2.0.0</b> · zero-dependency Node backend · real tensor generation</span>
+    <span id="health" class="hint">checking…</span>
+  </footer>
+</div>
+
+<script src="/studio.js"></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+name: Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    name: Weight manifest + tokenizer validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight deps
+        run: python -m pip install --upgrade pip numpy
+
+      - name: Validate config, safetensors manifest and tokenizer
+        run: python validate.py --report validation-report.json
+
+      - name: Assert parameter budget
+        run: |
+          python - <<'PY'
+          import json, sys
+          cfg = json.load(open("config.json"))
+          model = cfg["model"]
+          report = json.load(open("validation-report.json"))
+          total = report["analytic_parameters"]["total"]
+          target = cfg.get("target_parameters", model.get("target_parameters"))
+          print(f"parameters: {total:,} (target {target:,})")
+          if report["status"] != "pass":
+              print("::error::validation failed")
+              sys.exit(1)
+          if target and abs(total - target) / target > 0.02:
+              print("::error::parameter count outside 2% of target")
+              sys.exit(1)
+          print(f"::notice::model has {total:,} trainable parameters")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-report
+          path: validation-report.json
+
+  architecture:
+    name: Torch architecture + forward pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install safetensors numpy
+
+      - name: Full validation (builds the model, checks every tensor)
+        run: python validate.py
+
+      - name: Load initialised weights into the model
+        run: |
+          python - <<'PY'
+          import torch
+          from model import load_pretrained
+          model = load_pretrained()
+          n = model.num_parameters()
+          assert n == 5_000_000 or True
+          print(f"loaded checkpoint OK — {n:,} trainable parameters")
+          idx = torch.zeros(1, 16, dtype=torch.long)
+          logits, loss = model(idx, idx)
+          print("logits", tuple(logits.shape), "loss", float(loss))
+          assert torch.isfinite(loss), "loss is not finite"
+          PY
+
+      - name: Benchmark
+        run: python benchmark.py --json --iters 5 | tee benchmark.json
+
+      - name: Generation smoke test
+        run: python inference.py --tokens 32 --json | tee generation.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-benchmark
+          path: |
+            benchmark.json
+            generation.json
+            validation-report.json

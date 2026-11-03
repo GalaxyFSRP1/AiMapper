@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BeatForge — AI Beat Saber Mapper</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- LOADING SCREEN -->
+  <div id="loading-screen" style="position:fixed;inset:0;z-index:9999;background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s;overflow:hidden;">
+    <canvas id="load-particles" style="position:absolute;inset:0;pointer-events:none;"></canvas>
+    <div style="text-align:center;position:relative;z-index:1;">
+      <svg viewBox="0 0 48 48" fill="none" width="90" height="90" style="animation:loadSpin 1.5s ease-in-out infinite;filter:drop-shadow(0 0 20px #00e5ff);">
+        <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="#00e5ff" stroke-width="2" fill="none"/>
+        <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="#00e5ff" opacity="0.25"/>
+        <circle cx="24" cy="24" r="5" fill="#ff1744" opacity="0.8"/>
+        <circle cx="24" cy="24" r="3" fill="#fff"/>
+      </svg>
+      <h1 style="font-family:'Orbitron',monospace;font-size:2.4rem;color:#00e5ff;margin:24px 0 6px;letter-spacing:10px;text-shadow:0 0 30px rgba(0,229,255,0.5);">BEATFORGE</h1>
+      <p style="font-family:'Rajdhani',sans-serif;color:#445;font-size:0.85rem;letter-spacing:4px;">AI AUTO-MAPPER &bull; BY PHANTOMVOIDTTV</p>
+      <div id="load-countdown" style="font-family:'Orbitron',monospace;font-size:3.5rem;color:#ff1744;margin-top:24px;font-weight:900;text-shadow:0 0 20px rgba(255,23,68,0.5);">5</div>
+      <div style="width:240px;height:3px;background:#111;border-radius:2px;margin:16px auto 0;overflow:hidden;">
+        <div id="load-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#ff1744,#ff6090,#00e5ff);transition:width 0.85s ease;border-radius:2px;"></div>
+      </div>
+      <div id="load-status" style="font-family:'Rajdhani',sans-serif;color:#556;font-size:0.7rem;margin-top:14px;height:16px;letter-spacing:1px;"></div>
+    </div>
+  </div>
+  <style>
+    @keyframes loadSpin { 0%{transform:rotate(0deg) scale(1)} 50%{transform:rotate(180deg) scale(1.08)} 100%{transform:rotate(360deg) scale(1)} }
+  </style>
+  <script>
+    (function(){
+      var pc=document.getElementById('load-particles');
+      if(pc){var cx=pc.getContext('2d');pc.width=window.innerWidth;pc.height=window.innerHeight;var pts=[];for(var i=0;i<50;i++)pts.push({x:Math.random()*pc.width,y:Math.random()*pc.height,vx:(Math.random()-0.5)*0.6,vy:(Math.random()-0.5)*0.6,r:Math.random()*2+0.5,h:Math.random()>0.5?190:350});function dp(){cx.clearRect(0,0,pc.width,pc.height);for(var p of pts){p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=pc.width;if(p.x>pc.width)p.x=0;if(p.y<0)p.y=pc.height;if(p.y>pc.height)p.y=0;cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle='hsla('+p.h+',100%,60%,0.2)';cx.fill();}if(document.getElementById('loading-screen').style.display!=='none')requestAnimationFrame(dp);}dp();}
+      var msgs=['Initializing audio engine...','Loading pattern vocabulary...','Calibrating spectral analyzer...','Preparing beat grid system...','Systems online — ready to forge!'];
+      var cd=document.getElementById('load-countdown'),fill=document.getElementById('load-bar-fill'),st=document.getElementById('load-status'),scr=document.getElementById('loading-screen');
+      var c=5;if(fill)fill.style.width='0%';
+      var iv=setInterval(function(){c--;if(cd)cd.textContent=c;if(fill)fill.style.width=((5-c)/5*100)+'%';if(st&&msgs[5-c-1])st.textContent=msgs[5-c-1];if(c<=0){clearInterval(iv);scr.style.opacity='0';setTimeout(function(){scr.style.display='none';},800);}},850);
+    })();
+  </script>
+
+  <canvas id="bg-canvas"></canvas>
+
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 48 48" fill="none">
+            <path d="M24 4L42 14V34L24 44L6 34V14L24 4Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M24 4L42 14L24 24L6 14L24 4Z" fill="currentColor" opacity="0.3"/>
+            <path d="M24 24V44" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="24" cy="24" r="4" fill="currentColor"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="logo-text">BEATFORGE</h1>
+          <p class="logo-sub">AI Auto-Mapper &bull; v3.3.0 &bull; Beat Saber 1.40+</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-version">Schema 3.3.0</span>
+        <span class="badge badge-ranked">Ranked Mode</span>
+        <a href="/studio" class="badge" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(0,229,255,0.45);color:#00e5ff;background:rgba(0,229,255,0.08);padding:3px 9px;border-radius:4px;font-family:'Orbitron',monospace;font-size:0.6rem;letter-spacing:1px;" title="AI Model Studio — generate a real ~5M parameter model and publish it to GitHub">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4.09 12.97A1 1 0 004.86 14.5H11l-1 7.5 8.91-10.97A1 1 0 0018.14 9.5H12l1-7.5z"/></svg>
+          MODEL STUDIO
+        </a>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- STEP 1: Upload -->
+      <section class="panel panel-upload" id="panel-upload">
+        <div class="panel-header">
+          <span class="step-num">01</span>
+          <h2>LOAD AUDIO &amp; COVER</h2>
+        </div>
+        <div class="upload-grid">
+          <div class="upload-zone" id="zone-audio">
+            <div class="upload-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M9 18V5l12-2v13"/>
+                <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+              </svg>
+            </div>
+            <p class="upload-label">Drop audio file</p>
+            <p class="upload-hint">.ogg .mp3 .wav .flac .m4a .aac .wma</p>
+            <input type="file" id="input-audio" accept=".ogg,.mp3,.wav,.flac,.m4a,.aac,.wma,audio/*" hidden>
+          </div>
+          <div class="upload-zone" id="zone-cover">
+            <div class="upload-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="M21 15l-5-5L5 21"/>
+              </svg>
+            </div>
+            <p class="upload-label">Drop cover image</p>
+            <p class="upload-hint">.jpg .png .webp .gif .bmp</p>
+            <input type="file" id="input-cover" accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,image/*" hidden>
+          </div>
+        </div>
+        <div class="file-status" id="file-status"></div>
+      </section>
+
+      <!-- STEP 2: Config -->
+      <section class="panel panel-config" id="panel-config">
+        <div class="panel-header">
+          <span class="step-num">02</span>
+          <h2>MAP CONFIGURATION</h2>
+        </div>
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Song Name</label>
+            <input type="text" id="cfg-song-name" placeholder="My Song">
+          </div>
+          <div class="config-field">
+            <label>Song Author</label>
+            <input type="text" id="cfg-song-author" placeholder="Artist Name">
+          </div>
+          <div class="config-field">
+            <label>Map Author</label>
+            <input type="text" id="cfg-map-author" placeholder="BeatForge AI">
+          </div>
+          <div class="config-field">
+            <label>BPM <small>(auto-detected, click to override)</small></label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="number" id="cfg-bpm" placeholder="Auto-detect" min="30" max="300" style="flex:1">
+              <button type="button" id="btn-tap-bpm" class="btn-sm" title="Tap to the beat to set BPM manually">TAP</button>
+            </div>
+            <small id="bpm-info" style="color:#888;font-size:0.65rem;margin-top:2px;display:block"></small>
+          </div>
+          <div class="config-field">
+            <label>Environment</label>
+            <select id="cfg-environment">
+              <optgroup label="Base Environments">
+                <option value="DefaultEnvironment">Default</option>
+                <option value="NiceEnvironment">Nice</option>
+                <option value="TriangleEnvironment">Triangle</option>
+                <option value="BigMirrorEnvironment">Big Mirror</option>
+                <option value="KDAEnvironment">K/DA</option>
+                <option value="MonstercatEnvironment">Monstercat</option>
+                <option value="DragonsEnvironment">Dragons</option>
+                <option value="CrabRaveEnvironment">Crab Rave</option>
+                <option value="OriginsEnvironment">Origins</option>
+                <option value="PanicEnvironment">Panic</option>
+                <option value="RocketEnvironment">Rocket</option>
+                <option value="GreenDayEnvironment">Green Day</option>
+                <option value="GreenDayGrenadeEnvironment">Green Day Grenade</option>
+                <option value="TimbalandEnvironment">Timbaland</option>
+                <option value="FitBeatEnvironment">FitBeat</option>
+                <option value="LinkinParkEnvironment">Linkin Park</option>
+                <option value="BTSEnvironment">BTS</option>
+                <option value="KaleidoscopeEnvironment">Kaleidoscope</option>
+                <option value="InterscopeEnvironment">Interscope</option>
+                <option value="SkrillexEnvironment">Skrillex</option>
+                <option value="BillieEnvironment">Billie</option>
+                <option value="HalloweenEnvironment">Halloween</option>
+                <option value="GagaEnvironment">Gaga</option>
+              </optgroup>
+              <optgroup label="V3 Environments">
+                <option value="WeaveEnvironment">Weave</option>
+                <option value="PyroEnvironment">Pyro</option>
+                <option value="EDMEnvironment">EDM</option>
+                <option value="TheSecondEnvironment">The Second</option>
+                <option value="LizzoEnvironment">Lizzo</option>
+                <option value="TheWeekndEnvironment">The Weeknd</option>
+                <option value="RockMixtapeEnvironment">Rock Mixtape</option>
+                <option value="Dragons2Environment">Dragons 2</option>
+                <option value="Panic2Environment">Panic 2</option>
+                <option value="QueenEnvironment">Queen</option>
+                <option value="LinkinPark2Environment">Linkin Park 2</option>
+                <option value="TheRollingStonesEnvironment">The Rolling Stones</option>
+                <option value="LatticeEnvironment">Lattice</option>
+                <option value="DaftPunkEnvironment">Daft Punk</option>
+                <option value="HipHopEnvironment">Hip Hop Mixtape</option>
+                <option value="ColliderEnvironment">Collider</option>
+                <option value="BritneyEnvironment">Britney</option>
+                <option value="Monstercat2Environment">Monstercat 2</option>
+                <option value="MetallicaEnvironment">Metallica</option>
+                <option value="GridEnvironment">Cube</option>
+                <option value="ColdplayEnvironment">Coldplay</option>
+              </optgroup>
+              <optgroup label="360/90 Environments">
+                <option value="GlassDesertEnvironment">Glass Desert</option>
+                <option value="MultiplayerEnvironment">Multiplayer</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Map Style</label>
+            <select id="cfg-style">
+              <option value="balanced">Balanced (Default)</option>
+              <option value="dance">Dance — Flow & Arcs</option>
+              <option value="tech">Tech — Ranked Precision</option>
+              <option value="speed">Speed — Dense Streams</option>
+              <option value="fitness">Fitness — Walls & Dodging</option>
+              <option value="chill">Chill — Minimal & Relaxed</option>
+              <option value="spam">Note Spam — Every Beat Filled</option>
+              <option value="vibro">Vibro — Extreme Speed</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin:10px 0;">
+          <label style="font-family:'Orbitron',monospace;font-size:0.65rem;color:var(--neon-cyan);display:block;margin-bottom:6px;">QUICK PRESETS</label>
+          <div class="element-chips" style="flex-wrap:wrap;">
+            <button class="chip preset-btn" data-preset="edm" type="button">EDM</button>
+            <button class="chip preset-btn" data-preset="rock" type="button">Rock</button>
+            <button class="chip preset-btn" data-preset="pop" type="button">Pop</button>
+            <button class="chip preset-btn" data-preset="hiphop" type="button">Hip-Hop</button>
+            <button class="chip preset-btn" data-preset="metal" type="button">Metal</button>
+            <button class="chip preset-btn" data-preset="ambient" type="button">Ambient</button>
+            <button class="chip preset-btn" data-preset="dnb" type="button">DnB</button>
+            <button class="chip preset-btn" data-preset="jpop" type="button">J-Pop</button>
+            <button class="chip preset-btn" data-preset="classical" type="button">Classical</button>
+            <button class="chip preset-btn" data-preset="punk" type="button">Punk</button>
+            <button class="chip preset-btn" data-preset="synthwave" type="button">Synthwave</button>
+            <button class="chip preset-btn" data-preset="hardcore" type="button">Hardcore</button>
+            <button class="chip preset-btn" data-preset="spam" type="button" style="border-color:rgba(255,23,68,0.4);color:#ff6090;">Note Spam</button>
+            <button class="chip preset-btn" data-preset="vibro" type="button" style="border-color:rgba(255,23,68,0.4);color:#ff6090;">Vibro</button>
+          </div>
+        </div>
+        <div class="config-sliders">
+          <div class="slider-field">
+            <label>Pattern Complexity <span class="slider-val" id="val-complexity">50</span>%</label>
+            <input type="range" id="cfg-complexity" min="0" max="100" value="50">
+          </div>
+          <div class="slider-field">
+            <label>Lighting Intensity <span class="slider-val" id="val-lighting">70</span>%</label>
+            <input type="range" id="cfg-light-intensity" min="0" max="100" value="70">
+          </div>
+          <div class="slider-field">
+            <label>Note Density Bias <span class="slider-val" id="val-density">50</span>%</label>
+            <input type="range" id="cfg-density" min="0" max="100" value="50">
+          </div>
+          <div class="slider-field">
+            <label>NJS Override <span class="slider-val" id="val-njs">0</span> <small>(0 = auto)</small></label>
+            <input type="range" id="cfg-njs" min="0" max="24" value="0">
+          </div>
+          <div class="slider-field">
+            <label>NJS Offset <span class="slider-val" id="val-offset">0</span></label>
+            <input type="range" id="cfg-offset" min="-3" max="3" value="0" step="0.25">
+          </div>
+        </div>
+        <div class="diff-select">
+          <label>Difficulties to Generate</label>
+          <div class="diff-chips">
+            <label class="chip"><input type="checkbox" value="Easy"> Easy</label>
+            <label class="chip"><input type="checkbox" value="Normal"> Normal</label>
+            <label class="chip"><input type="checkbox" value="Hard" checked> Hard</label>
+            <label class="chip"><input type="checkbox" value="Expert" checked> Expert</label>
+            <label class="chip"><input type="checkbox" value="ExpertPlus" checked> Expert+</label>
+          </div>
+        </div>
+        <div class="element-toggles" style="margin:12px 0;">
+          <label style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);display:block;margin-bottom:8px;">MAP ELEMENTS</label>
+          <div class="element-chips">
+            <label class="chip"><input type="checkbox" id="tog-walls" checked> Walls</label>
+            <label class="chip"><input type="checkbox" id="tog-bombs" checked> Bombs</label>
+            <label class="chip"><input type="checkbox" id="tog-arcs" checked> Arcs</label>
+            <label class="chip"><input type="checkbox" id="tog-chains" checked> Chains</label>
+            <label class="chip" style="border-color:rgba(255,0,200,0.3);"><input type="checkbox" id="tog-chroma"> Chroma RGB</label>
+          </div>
+        </div>
+        <div style="margin:12px 0;">
+          <label style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);display:block;margin-bottom:8px;">LIGHTING STYLE</label>
+          <div class="element-chips">
+            <label class="chip"><input type="radio" name="light-style" id="light-dynamic" value="dynamic" checked> Dynamic</label>
+            <label class="chip"><input type="radio" name="light-style" id="light-smooth" value="smooth"> Smooth</label>
+            <label class="chip"><input type="radio" name="light-style" id="light-minimal" value="minimal"> Minimal</label>
+            <label class="chip"><input type="radio" name="light-style" id="light-strobe" value="strobe"> Strobe</label>
+          </div>
+        </div>
+        <div style="margin:12px 0;">
+          <label style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);display:block;margin-bottom:8px;">COLOR SCHEME</label>
+          <div class="element-chips">
+            <label class="chip"><input type="radio" name="color-scheme" id="col-auto" value="auto" checked> Auto</label>
+            <label class="chip"><input type="radio" name="color-scheme" id="col-blue" value="blue"> Blue</label>
+            <label class="chip"><input type="radio" name="color-scheme" id="col-red" value="red"> Red</label>
+            <label class="chip"><input type="radio" name="color-scheme" id="col-white" value="white"> White</label>
+          </div>
+        </div>
+        <div class="ranked-toggle">
+          <label class="toggle-label">
+            <input type="checkbox" id="cfg-ranked" checked>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Ranked Validation Mode
+          </label>
+        </div>
+      </section>
+
+      <!-- STEP 3: Generate -->
+      <section class="panel panel-generate" id="panel-generate">
+        <div class="panel-header">
+          <span class="step-num">03</span>
+          <h2>GENERATE &amp; EXPORT</h2>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn-generate" id="btn-generate" disabled style="flex:1">
+            <span class="btn-icon">&#9889;</span>
+            <span>FORGE MAP</span>
+          </button>
+          <button class="btn-generate" id="btn-regenerate" disabled style="flex:0.5;font-size:0.8rem;letter-spacing:2px;opacity:0.7" title="Re-generate with same audio (different patterns)">
+            <span>&#8635; REDO</span>
+          </button>
+        </div>
+        <div class="progress-area" id="progress-area" style="display:none;">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-fill"></div>
+          </div>
+          <p class="progress-text" id="progress-text">Initializing...</p>
+        </div>
+      </section>
+
+      <!-- AI MODEL STATUS (injected by ai_model.js + app.js) -->
+      <!-- panel-ai-result is dynamically created by updateAIResultPanel() -->
+
+      <!-- STEP 4: Results -->
+      <section class="panel panel-results" id="panel-results" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">04</span>
+          <h2>MAP RESULTS</h2>
+        </div>
+        <div class="results-grid" id="results-grid"></div>
+        <div class="rank-display" id="rank-display"></div>
+        <!-- Note Density Timeline -->
+        <div class="density-section" id="density-section" style="margin:12px 0;">
+          <h3 style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);margin-bottom:6px;">NOTE DENSITY OVER TIME</h3>
+          <canvas id="density-canvas" width="800" height="80" style="width:100%;height:80px;border-radius:6px;background:rgba(0,0,0,0.3);"></canvas>
+        </div>
+        <!-- Pattern Distribution -->
+        <div class="pattern-breakdown" id="pattern-breakdown" style="margin:12px 0;font-size:0.7rem;color:#aaa;"></div>
+        <!-- Onset Sync Quality -->
+        <div class="onset-sync" id="onset-sync" style="margin:8px 0;font-size:0.7rem;"></div>
+        <!-- Section Timeline -->
+        <div id="section-timeline" style="margin:12px 0;">
+          <h3 style="font-family:'Orbitron',monospace;font-size:0.7rem;color:var(--neon-cyan);margin-bottom:6px;">SONG STRUCTURE</h3>
+          <canvas id="section-canvas" width="800" height="36" style="width:100%;height:36px;border-radius:6px;background:rgba(0,0,0,0.3);"></canvas>
+        </div>
+        <!-- Map Quality Score -->
+        <div id="quality-score" style="margin:12px 0;"></div>
+        <!-- Map Stats Summary -->
+        <div id="map-stats" style="margin:12px 0;font-size:0.7rem;color:#aaa;"></div>
+        <!-- Star Rating Estimates -->
+        <div id="star-ratings" style="margin:12px 0;"></div>
+        <div class="export-actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <button class="btn-export" id="btn-export">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download .zip
+          </button>
+          <button class="btn-export" id="btn-preview-arc" style="background:linear-gradient(135deg,#6a1b9a,#00bcd4);border-color:#00bcd4;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+            Preview in ArcViewer
+          </button>
+          <button class="btn-sm" id="btn-reopen-preview" title="Re-open ArcViewer" style="padding:8px 12px;font-family:'Orbitron',monospace;font-size:0.6rem;background:rgba(106,27,154,0.15);border:1px solid rgba(0,188,212,0.3);color:#00bcd4;border-radius:6px;cursor:pointer;">RE-OPEN ARCVIEWER</button>
+          <button class="btn-sm" id="btn-copy-info" title="Copy map info to clipboard" style="padding:8px 14px;font-family:'Orbitron',monospace;font-size:0.65rem;background:rgba(0,229,255,0.1);border:1px solid rgba(0,229,255,0.3);color:var(--neon-cyan);border-radius:6px;cursor:pointer;">COPY INFO</button>
+        </div>
+        <!-- Share Preview Link -->
+        <div id="preview-share-panel" style="display:none;margin-top:8px;align-items:center;gap:6px;flex-wrap:wrap;">
+          <input type="text" id="preview-url" readonly style="flex:1;min-width:200px;padding:6px 10px;font-size:0.7rem;font-family:'Rajdhani',sans-serif;background:rgba(0,0,0,0.3);border:1px solid rgba(0,229,255,0.2);border-radius:6px;color:#00e5ff;outline:none;">
+          <button class="btn-sm" id="btn-copy-preview-link" style="padding:6px 12px;font-family:'Orbitron',monospace;font-size:0.6rem;background:rgba(0,229,255,0.1);border:1px solid rgba(0,229,255,0.3);color:var(--neon-cyan);border-radius:6px;cursor:pointer;">COPY LINK</button>
+          <span style="font-size:0.6rem;color:#556;">ArcViewer auto-load link</span>
+        </div>
+        <!-- GitHub Preview Config -->
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer;font-family:'Orbitron',monospace;font-size:0.6rem;color:var(--neon-cyan);letter-spacing:1px;">ARCVIEWER GITHUB SETTINGS</summary>
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:end;">
+            <div style="flex:1;min-width:120px;">
+              <label style="font-size:0.6rem;color:#667;display:block;">GitHub Token (PAT)</label>
+              <input type="password" id="cfg-gh-token" placeholder="ghp_..." style="width:100%;padding:5px 8px;font-size:0.7rem;font-family:'Rajdhani',sans-serif;background:rgba(0,0,0,0.3);border:1px solid rgba(0,229,255,0.15);border-radius:4px;color:#aab;outline:none;">
+            </div>
+            <div style="min-width:100px;">
+              <label style="font-size:0.6rem;color:#667;display:block;">Repo Owner</label>
+              <input type="text" id="cfg-gh-owner" value="GalaxyFSRP1" style="width:100%;padding:5px 8px;font-size:0.7rem;font-family:'Rajdhani',sans-serif;background:rgba(0,0,0,0.3);border:1px solid rgba(0,229,255,0.15);border-radius:4px;color:#aab;outline:none;">
+            </div>
+            <div style="min-width:100px;">
+              <label style="font-size:0.6rem;color:#667;display:block;">Repo Name</label>
+              <input type="text" id="cfg-gh-repo" value="AiMapper" style="width:100%;padding:5px 8px;font-size:0.7rem;font-family:'Rajdhani',sans-serif;background:rgba(0,0,0,0.3);border:1px solid rgba(0,229,255,0.15);border-radius:4px;color:#aab;outline:none;">
+            </div>
+            <button class="btn-sm" id="btn-save-gh" style="padding:5px 12px;font-family:'Orbitron',monospace;font-size:0.6rem;background:rgba(0,229,255,0.1);border:1px solid rgba(0,229,255,0.3);color:var(--neon-cyan);border-radius:4px;cursor:pointer;">SAVE</button>
+          </div>
+          <p style="font-size:0.55rem;color:#445;margin-top:4px;">Create a <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" style="color:var(--neon-cyan);">GitHub PAT</a> with "repo" scope. Paste the token above and click SAVE. Previews upload to <code>previews/</code> in <a href="https://github.com/GalaxyFSRP1/AiMapper" target="_blank" style="color:var(--neon-cyan);">GalaxyFSRP1/AiMapper</a>. Token is stored in your browser only.</p>
+        </details>
+      </section>
+
+      <!-- Built-In Note Timeline Preview -->
+      <section class="panel panel-preview" id="panel-preview" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9654;</span>
+          <h2>NOTE TIMELINE PREVIEW</h2>
+          <select id="timeline-diff-select" style="margin-left:auto;padding:4px 8px;font-family:'Orbitron',monospace;font-size:0.6rem;background:rgba(0,0,0,0.4);border:1px solid rgba(0,229,255,0.3);color:var(--neon-cyan);border-radius:4px;outline:none;"></select>
+        </div>
+        <canvas id="preview-timeline" width="900" height="140" style="width:100%;height:140px;border-radius:6px;cursor:crosshair;"></canvas>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:0.6rem;color:#556;font-family:'Rajdhani',sans-serif;">
+          <span>Start</span>
+          <span style="color:#ff1744;">&#9632; Red</span>
+          <span style="color:#2979ff;">&#9632; Blue</span>
+          <span style="color:rgba(100,100,100,0.5);">&#9632; Walls</span>
+          <span>End</span>
+        </div>
+      </section>
+
+      <!-- Note Grid Preview -->
+      <section class="panel panel-grid" id="panel-grid" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9632;</span>
+          <h2>NOTE GRID PREVIEW</h2>
+        </div>
+        <div class="grid-preview-container">
+          <canvas id="grid-canvas" width="400" height="320"></canvas>
+          <div class="grid-stats" id="grid-stats"></div>
+        </div>
+      </section>
+
+      <!-- Generation Log -->
+      <section class="panel panel-log" id="panel-log" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9998;</span>
+          <h2>GENERATION LOG</h2>
+        </div>
+        <div class="gen-log" id="gen-log"></div>
+      </section>
+
+      <!-- Live Waveform + Audio Preview -->
+      <section class="panel panel-viz" id="panel-viz" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9835;</span>
+          <h2>AUDIO ANALYSIS</h2>
+        </div>
+        <div class="audio-player-row">
+          <button class="btn-play" id="btn-play" title="Play/Pause">
+            <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><polygon points="5,3 19,12 5,21"/></svg>
+            <svg id="icon-pause" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="display:none"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+          </button>
+          <div class="audio-time" id="audio-time">0:00 / 0:00</div>
+        </div>
+        <canvas id="waveform-canvas" width="900" height="160"></canvas>
+        <div class="spectral-bands" id="spectral-bands">
+          <div class="band-meter"><div class="band-label">BASS</div><div class="band-bar-track"><div class="band-bar-fill band-bass" id="band-bass"></div></div></div>
+          <div class="band-meter"><div class="band-label">MID</div><div class="band-bar-track"><div class="band-bar-fill band-mid" id="band-mid"></div></div></div>
+          <div class="band-meter"><div class="band-label">HIGH</div><div class="band-bar-track"><div class="band-bar-fill band-high" id="band-high"></div></div></div>
+        </div>
+        <div class="viz-stats" id="viz-stats"></div>
+        <div class="viz-section-list" id="viz-section-list"></div>
+        <!-- Energy Curve Visualization -->
+        <div style="margin-top:10px;">
+          <canvas id="energy-canvas" width="900" height="60" style="width:100%;height:60px;border-radius:6px;background:rgba(0,0,0,0.3);"></canvas>
+          <div style="display:flex;justify-content:space-between;font-size:0.55rem;color:#445;font-family:'Rajdhani',sans-serif;margin-top:2px;">
+            <span>Energy Curve</span>
+            <span style="color:#ff3898;">■ Bass</span>
+            <span style="color:#00e5ff;">■ Mid</span>
+            <span style="color:#c080ff;">■ High</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Map Warnings Panel -->
+      <section class="panel" id="panel-warnings" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9888;</span>
+          <h2>MAP WARNINGS</h2>
+        </div>
+        <div id="warnings-list" style="font-size:0.75rem;color:#ccc;"></div>
+      </section>
+
+      <!-- Per-Difficulty Breakdown -->
+      <section class="panel panel-diff-stats" id="panel-diff-stats" style="display:none;">
+        <div class="panel-header">
+          <span class="step-num">&#9733;</span>
+          <h2>PER-DIFFICULTY BREAKDOWN</h2>
+        </div>
+        <div class="diff-stats-table" id="diff-stats-table"></div>
+      </section>
+
+      <!-- Mapping Tips -->
+      <section class="panel" id="panel-tips" style="margin-top:16px;">
+        <div class="panel-header">
+          <span class="step-num">&#128161;</span>
+          <h2>MAPPING TIPS</h2>
+        </div>
+        <div style="font-size:0.75rem;color:#99a;line-height:1.6;">
+          <details>
+            <summary style="color:var(--neon-cyan);font-family:'Orbitron',monospace;font-size:0.65rem;">GETTING BETTER RESULTS</summary>
+            <ul style="margin:8px 0;padding-left:18px;color:#889;">
+              <li>Use <b>.ogg</b> audio for best compatibility — convert MP3/WAV with Audacity</li>
+              <li>Songs with clear percussion (EDM, rock, pop) map better than ambient music</li>
+              <li>Try different <b>Style</b> presets — "Tech" for ranked, "Dance" for flow, "Speed" for streams</li>
+              <li>Adjust <b>Pattern Complexity</b> slider — higher = more doubles, windows, streams</li>
+              <li>Click <b>Re-roll</b> (R key) to get different patterns with the same audio analysis</li>
+              <li>Check the <b>Map Warnings</b> panel after generation for potential issues</li>
+            </ul>
+          </details>
+          <details>
+            <summary style="color:var(--neon-cyan);font-family:'Orbitron',monospace;font-size:0.65rem;">UNDERSTANDING BPM DETECTION</summary>
+            <ul style="margin:8px 0;padding-left:18px;color:#889;">
+              <li>BeatForge uses <b>5 methods</b>: energy autocorrelation, bass autocorrelation, onset histogram, beat-grid tracking, and spectral flux</li>
+              <li><b>[HIGH]</b> confidence means 4+ methods agree — very reliable</li>
+              <li><b>[MED]</b> means 2-3 agree — probably correct but verify in ArcViewer</li>
+              <li><b>[LOW]</b> means methods disagree — manually enter the BPM if you know it</li>
+              <li>Variable BPM songs show tempo changes below the BPM display</li>
+            </ul>
+          </details>
+          <details>
+            <summary style="color:var(--neon-cyan);font-family:'Orbitron',monospace;font-size:0.65rem;">ARCVIEWER PREVIEW</summary>
+            <ul style="margin:8px 0;padding-left:18px;color:#889;">
+              <li>Set up your <b>GitHub token</b> in ArcViewer Settings for one-click preview</li>
+              <li>Without a token, the zip downloads and you drag it into ArcViewer manually</li>
+              <li>Preview files upload to <code>previews/</code> in your repo — old ones auto-cleanup</li>
+              <li>ArcViewer loads via <code>?url=</code> parameter from your custom domain</li>
+            </ul>
+          </details>
+          <details>
+            <summary style="color:var(--neon-cyan);font-family:'Orbitron',monospace;font-size:0.65rem;">ABOUT BEATFORGE</summary>
+            <p style="margin:8px 0;color:#889;">
+              BeatForge is an AI-powered Beat Saber auto-mapper built by <b style="color:var(--neon-cyan);">PhantomVoidTTV</b>. 
+              It uses Web Audio API spectral analysis, BSMG mapping theory (parity, swing curvature, emphasis matching, 
+              instrument detection), and a multi-method BPM engine to generate playable maps with proper lighting, 
+              walls, arcs, chains, and bombs. Maps export as Beat Saber v3.3.0 schema with Info.dat v2.1.0, 
+              compatible with Beat Saber 1.40+ and all environments from Default to Coldplay.
+            </p>
+            <p style="margin:4px 0;color:#556;font-size:0.65rem;">
+              v2.2 &bull; 145 functions &bull; 5 BPM methods &bull; 14 presets &bull; 50+ environments &bull; 
+              Chroma RGB &bull; GitHub ArcViewer integration &bull; BSMG downmapping
+            </p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>BeatForge AI v2.2 &mdash; Schema 3.3.0 &bull; Beat Saber 1.40+ &bull; 5-Method BPM &bull; BSMG Theory &bull; GitHub Preview</p>
+      <p style="font-size:0.6rem;color:#334;margin-top:4px;">Shortcuts: <kbd>Space</kbd> Play &bull; <kbd>Enter</kbd> Generate &bull; <kbd>R</kbd> Re-roll &bull; <kbd>E</kbd> Export &bull; <kbd>P</kbd> Preview</p>
+      <p style="font-size:0.55rem;color:#223;margin-top:2px;">Made by PhantomVoidTTV &bull; <a href="https://github.com/GalaxyFSRP1/AiMapper" target="_blank" style="color:#445;">GitHub</a> &bull; Powered by BeatForge AI Engine</p>
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.17.1/ort.min.js"></script>
+  <script src="ai_model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

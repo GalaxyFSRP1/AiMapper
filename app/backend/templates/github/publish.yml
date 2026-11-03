@@ -1,0 +1,48 @@
+name: Publish model release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate before publishing
+        run: |
+          python -m pip install --upgrade pip numpy
+          python validate.py
+
+      - name: Package model artifacts
+        run: |
+          mkdir -p dist
+          zip -r dist/model-weights.zip weights/ config.json generation_config.json
+          zip -r dist/model-source.zip model.py tokenizer/ data/ *.py config.json
+          cp validation-report.json dist/ 2>/dev/null || true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            MapperGPT model release.
+
+            See `validation-report.json` for the verified parameter count and
+            tensor manifest details.
